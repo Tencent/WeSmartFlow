@@ -1,0 +1,10 @@
+name: agent
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - nodejs=25
+  - pip
+  - pip:
+      - -r backend/requirements.txt

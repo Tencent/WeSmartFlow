@@ -1,0 +1,9 @@
+# 样式文件交给 stylelint 管理，避免与 prettier 的格式化规则冲突
+*.css
+*.scss
+*.sass
+*.less
+
+# 构建产物
+dist/
+node_modules/
