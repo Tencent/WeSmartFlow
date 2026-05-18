@@ -9,4 +9,7 @@ export { nodeApi } from "./nodes.js";
 export { documentApi } from "./documents.js";
 export { sessionApi } from "./sessions.js";
 export { quizApi } from "./quizzes.js";
+export { authApi } from "./auth.js";
+export { briefApi } from "./brief.js";
+export { settingsApi } from "./settings.js";
 export { api, BASE_URL, ApiError } from "./base.js";

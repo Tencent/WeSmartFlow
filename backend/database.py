@@ -6,6 +6,8 @@ SQLite 数据库初始化与连接管理
 - WAL 模式提升并发读性能
 - 所有表在首次启动时自动创建（如不存在）
 - 对外暴露 get_db() 上下文管理器，FastAPI 依赖注入用
+- DDL 始终保持最新完整结构，不包含任何兼容迁移逻辑
+- 旧数据库迁移请运行 migrate_db.py
 """
 
 import sqlite3
@@ -13,23 +15,30 @@ import logging
 from contextlib import contextmanager
 from typing import Generator
 
+import bcrypt
+
 from config import DB_PATH
 
 logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------
-# DDL：建表语句
+# DDL：建表语句（最新完整结构，可直接用于全新数据库）
 # --------------------------------------------------------------------------
 
 _CREATE_TABLES_SQL = """
 -- 用户表
 CREATE TABLE IF NOT EXISTS users (
-    id          TEXT PRIMARY KEY,
-    name        TEXT NOT NULL,
-    avatar_url  TEXT,
-    preferences TEXT NOT NULL DEFAULT '{}',
-    about       TEXT NOT NULL DEFAULT '{}',
-    created_at  TEXT NOT NULL
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
+    email           TEXT UNIQUE,
+    password_hash   TEXT NOT NULL DEFAULT '',
+    avatar_url      TEXT,
+    wechat_openid   TEXT UNIQUE,
+    github_id       TEXT UNIQUE,
+    github_username TEXT,
+    preferences     TEXT NOT NULL DEFAULT '{}',
+    about           TEXT NOT NULL DEFAULT '{}',
+    created_at      TEXT NOT NULL
 );
 
 -- 文档表（上传的 PDF/txt 或 AI 生成的课件）
@@ -37,16 +46,16 @@ CREATE TABLE IF NOT EXISTS documents (
     id                          TEXT PRIMARY KEY,
     user_id                     TEXT NOT NULL,
     title                       TEXT NOT NULL,
-    source                      TEXT NOT NULL,      -- 'uploaded' | 'generated'
-    file_name                   TEXT NOT NULL,      -- 文件名（不含路径）
-    file_type                   TEXT NOT NULL,      -- 'pdf' | 'txt' | 'md' | 'docx'
+    source                      TEXT NOT NULL,
+    file_name                   TEXT NOT NULL,
+    storage_key                 TEXT NOT NULL DEFAULT '',
+    file_type                   TEXT NOT NULL,
     file_size                   INTEGER NOT NULL DEFAULT 0,
     status                      TEXT NOT NULL DEFAULT 'pending',
     error_msg                   TEXT,
     total_pages                 INTEGER,
     generated_from_session_id   TEXT,
-    generation_prompt           TEXT,               -- AI生成提示词
-    generation_context          TEXT,               -- AI生成上下文
+    generation_prompt           TEXT,
     node_ids                    TEXT NOT NULL DEFAULT '[]',
     created_at                  TEXT NOT NULL,
     processed_at                TEXT,
@@ -85,7 +94,6 @@ CREATE TABLE IF NOT EXISTS sessions (
     files               TEXT NOT NULL DEFAULT '[]',
     message_count       INTEGER NOT NULL DEFAULT 0,
     duration_minutes    INTEGER NOT NULL DEFAULT 0,
-    messages_file       TEXT NOT NULL,
     created_at          TEXT NOT NULL,
     ended_at            TEXT,
     FOREIGN KEY (user_id) REFERENCES users(id)
@@ -97,14 +105,14 @@ CREATE TABLE IF NOT EXISTS quizzes (
     user_id         TEXT NOT NULL,
     node_id         TEXT NOT NULL,
     session_id      TEXT,
-    quiz_type       TEXT NOT NULL,  -- 'multiple_choice' | 'fill_in' | 'true_false' | 'open_ended'
+    quiz_type       TEXT NOT NULL,
     question        TEXT NOT NULL,
-    options         TEXT,           -- JSON array | null
+    options         TEXT,
     correct_answer  TEXT NOT NULL,
     explanation     TEXT NOT NULL DEFAULT '',
     user_answer     TEXT,
-    is_correct      INTEGER,        -- 0 | 1 | null
-    score           REAL,           -- 0.0~1.0，主观题 AI 评分
+    is_correct      INTEGER,
+    score           REAL,
     answered_at     TEXT,
     created_at      TEXT NOT NULL,
     FOREIGN KEY (user_id) REFERENCES users(id),
@@ -115,7 +123,7 @@ CREATE TABLE IF NOT EXISTS quizzes (
 CREATE TABLE IF NOT EXISTS study_logs (
     id          TEXT PRIMARY KEY,
     user_id     TEXT NOT NULL,
-    date        TEXT NOT NULL,      -- YYYY-MM-DD
+    date        TEXT NOT NULL,
     minutes     INTEGER NOT NULL,
     session_id  TEXT,
     node_ids    TEXT NOT NULL DEFAULT '[]',
@@ -124,35 +132,47 @@ CREATE TABLE IF NOT EXISTS study_logs (
 );
 CREATE INDEX IF NOT EXISTS idx_study_logs_user_date ON study_logs(user_id, date);
 
--- 每日学习计划缓存表（AI 生成的任务 + 推荐，供 Dashboard 使用，每天只生成一次）
+-- 每日学习计划缓存表
 CREATE TABLE IF NOT EXISTS daily_plans (
     id              TEXT PRIMARY KEY,
     user_id         TEXT NOT NULL,
-    date            TEXT NOT NULL,      -- YYYY-MM-DD
-    tasks           TEXT NOT NULL DEFAULT '[]',   -- JSON: DailyTask[]
-    recommendation  TEXT NOT NULL DEFAULT '{}',   -- JSON: AiRecommendation
+    date            TEXT NOT NULL,
+    tasks           TEXT NOT NULL DEFAULT '[]',
+    recommendation  TEXT NOT NULL DEFAULT '{}',
     created_at      TEXT NOT NULL,
-    FOREIGN KEY (user_id) REFERENCES users(id)
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    UNIQUE (user_id, date)
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_plans_user_date ON daily_plans(user_id, date);
 
--- 每日资讯简报缓存表（AI 根据 interests 生成的资讯分组，供简报页使用，每天只生成一次）
+-- 每日资讯简报缓存表
 CREATE TABLE IF NOT EXISTS daily_briefs (
     id          TEXT PRIMARY KEY,
     user_id     TEXT NOT NULL,
-    date        TEXT NOT NULL,          -- YYYY-MM-DD
-    news_groups TEXT NOT NULL DEFAULT '[]',   -- JSON: NewsGroup[]
+    date        TEXT NOT NULL,
+    news_groups TEXT NOT NULL DEFAULT '[]',
     created_at  TEXT NOT NULL,
-    FOREIGN KEY (user_id) REFERENCES users(id)
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    UNIQUE (user_id, date)
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_briefs_user_date ON daily_briefs(user_id, date);
 
--- 系统设置表（KV 存储，支持运行时修改 LLM 等配置）
+-- 用户设置表（每用户独立 KV 存储）
 CREATE TABLE IF NOT EXISTS settings (
-    key         TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL,
+    key         TEXT NOT NULL,
     value       TEXT NOT NULL DEFAULT '',
     description TEXT NOT NULL DEFAULT '',
-    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, key),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+-- API 使用量统计表
+CREATE TABLE IF NOT EXISTS api_usage (
+    user_id   TEXT NOT NULL,
+    category  TEXT NOT NULL,
+    count     INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, category),
+    FOREIGN KEY (user_id) REFERENCES users(id)
 );
 """
 
@@ -162,39 +182,57 @@ CREATE TABLE IF NOT EXISTS settings (
 
 
 def _make_connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
-    conn.row_factory = sqlite3.Row  # 结果以字典方式访问
+    conn = sqlite3.connect(str(DB_PATH), timeout=30, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA synchronous=NORMAL")
     return conn
 
 
+def _hash_password(plain: str) -> str:
+    """对明文密码进行 bcrypt 哈希。"""
+    return bcrypt.hashpw(plain.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def verify_password(plain: str, hashed: str) -> bool:
+    """验证明文密码是否匹配哈希。"""
+    return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+
+
 def init_db() -> None:
-    """建表（幂等），应用启动时调用一次。"""
+    """
+    建表（幂等），应用启动时调用一次。
+
+    注意：此函数假设数据库结构已是最新版本。
+    如果是从旧版本升级，请先运行 migrate_db.py 完成迁移。
+    """
     with _make_connection() as conn:
         conn.executescript(_CREATE_TABLES_SQL)
+
         # 确保默认用户存在（外键约束需要）
+        default_hash = _hash_password("123456")
         conn.execute(
             """
-            INSERT OR IGNORE INTO users (id, name, avatar_url, preferences, created_at)
-            VALUES ('default', '默认用户', NULL, '{}', datetime('now'))
-            """
+            INSERT OR IGNORE INTO users (id, name, password_hash, avatar_url, preferences, created_at)
+            VALUES ('default', '默认用户', ?, NULL, '{}', datetime('now'))
+            """,
+            (default_hash,),
         )
         conn.commit()
     logger.info("数据库初始化完成：%s", DB_PATH)
-    _init_settings_from_env()
+    _init_settings_for_user("default")
 
 
 @contextmanager
 def get_db() -> Generator[sqlite3.Connection, None, None]:
     """
-    上下文管理器，用于 FastAPI 依赖注入：
+    统一的数据库连接上下文管理器（短连接模式）。
 
-        async def route(db: sqlite3.Connection = Depends(get_db_dep)):
-            ...
-
-    每次请求获取一个独立连接，请求结束后自动提交/回滚并关闭。
+    用法：
+        with get_db() as conn:
+            conn.execute(...)
+            # 退出 with 块时自动 commit
     """
     conn = _make_connection()
     try:
@@ -207,100 +245,86 @@ def get_db() -> Generator[sqlite3.Connection, None, None]:
         conn.close()
 
 
-def get_db_dep():
-    """FastAPI Depends 包装器。"""
-    with get_db() as conn:
-        yield conn
-
-
 # --------------------------------------------------------------------------
 # Settings 工具函数
 # --------------------------------------------------------------------------
 
-# 所有支持的配置项定义：key -> (env_var, description, default)
 _SETTINGS_SCHEMA: list[tuple[str, str, str, str]] = [
     # (key, env_var, description, default)
-    ("llm_api_key", "LLM_API_KEY", "LLM API Key", ""),
-    ("llm_base_url", "LLM_BASE_URL", "LLM API Base URL", ""),
-    ("llm_model", "LLM_MODEL", "LLM 模型名称", ""),
+    ("llm_api_key", "LLM_API_KEY", "LLM API Key（OpenAI 兼容）", ""),
+    ("llm_base_url", "LLM_BASE_URL", "LLM API Base URL（OpenAI 兼容）", ""),
+    ("llm_model", "LLM_MODEL", "LLM 模型名称（OpenAI 兼容）", ""),
     ("tavily_api_key", "TAVILY_API_KEY", "Tavily Search API Key", ""),
-    ("img_api_key", "IMG_API_KEY", "图像生成 API Key", ""),
-    ("img_base_url", "IMG_BASE_URL", "图像生成 Base URL", ""),
-    ("img_model", "IMG_MODEL", "图像生成模型名称", ""),
+    ("img_api_key", "IMG_API_KEY", "图像生成 API Key（OpenAI 兼容）", ""),
+    ("img_base_url", "IMG_BASE_URL", "图像生成 Base URL（OpenAI 兼容）", ""),
+    ("img_model", "IMG_MODEL", "图像生成模型名称（OpenAI 兼容）", ""),
 ]
 
 
-def _init_settings_from_env() -> None:
-    """将环境变量中的配置作为初始默认值写入 settings 表。
-    策略：
-    - key 不存在时：直接插入（无论环境变量是否为空）
-    - key 已存在但值为空，且环境变量有值时：用环境变量值覆盖
-    - key 已存在且值非空时：保留已有值，不覆盖
-    """
-    import os
-
+def _init_settings_for_user(user_id: str) -> None:
+    """为指定用户初始化 settings 表。"""
     with _make_connection() as conn:
-        for key, env_var, description, default in _SETTINGS_SCHEMA:
-            env_value = os.getenv(env_var, default)
-            # 先尝试插入（key 不存在时生效）
+        for key, _env_var, description, _default in _SETTINGS_SCHEMA:
             conn.execute(
                 """
-                INSERT OR IGNORE INTO settings (key, value, description, updated_at)
-                VALUES (?, ?, ?, datetime('now'))
+                INSERT OR IGNORE INTO settings (user_id, key, value, description, updated_at)
+                VALUES (?, ?, '', ?, datetime('now'))
                 """,
-                (key, env_value, description),
+                (user_id, key, description),
             )
-            # 若 key 已存在但数据库中值为空，且环境变量有值，则用环境变量值补充
-            if env_value:
-                conn.execute(
-                    """
-                    UPDATE settings SET value=?, updated_at=datetime('now')
-                    WHERE key=? AND (value IS NULL OR value='')
-                    """,
-                    (env_value, key),
-                )
         conn.commit()
-    logger.info("settings 表初始化完成（已从环境变量导入默认值）")
+    logger.info(
+        "用户 %s 的 settings 初始化完成（初始值为空，使用平台公共 Key）", user_id
+    )
 
 
-def get_all_settings() -> dict[str, str]:
-    """读取所有配置项，返回 {key: value} 字典。"""
+def ensure_user_settings(user_id: str) -> None:
+    """确保指定用户的 settings 已初始化（注册新用户时调用）。"""
+    _init_settings_for_user(user_id)
+
+
+def get_all_settings(user_id: str) -> dict[str, str]:
+    """读取指定用户的所有配置项，返回 {key: value} 字典。"""
     with _make_connection() as conn:
-        rows = conn.execute("SELECT key, value FROM settings").fetchall()
+        rows = conn.execute(
+            "SELECT key, value FROM settings WHERE user_id=?", (user_id,)
+        ).fetchall()
     return {row["key"]: row["value"] for row in rows}
 
 
-def get_setting(key: str) -> str | None:
-    """读取单个配置项，不存在返回 None。"""
+def get_setting(user_id: str, key: str) -> str | None:
+    """读取指定用户的单个配置项，不存在返回 None。"""
     with _make_connection() as conn:
-        row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        row = conn.execute(
+            "SELECT value FROM settings WHERE user_id=? AND key=?", (user_id, key)
+        ).fetchone()
     return row["value"] if row else None
 
 
-def set_setting(key: str, value: str) -> None:
-    """写入单个配置项（upsert）。"""
+def set_setting(user_id: str, key: str, value: str) -> None:
+    """写入指定用户的单个配置项（upsert）。"""
     with _make_connection() as conn:
         conn.execute(
             """
-            INSERT INTO settings (key, value, description, updated_at)
-            VALUES (?, ?, COALESCE((SELECT description FROM settings WHERE key=?), ''), datetime('now'))
-            ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+            INSERT INTO settings (user_id, key, value, description, updated_at)
+            VALUES (?, ?, ?, COALESCE((SELECT description FROM settings WHERE user_id=? AND key=?), ''), datetime('now'))
+            ON CONFLICT(user_id, key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
             """,
-            (key, value, key),
+            (user_id, key, value, user_id, key),
         )
         conn.commit()
 
 
-def set_settings_batch(data: dict[str, str]) -> None:
-    """批量写入配置项（upsert）。"""
+def set_settings_batch(user_id: str, data: dict[str, str]) -> None:
+    """批量写入指定用户的配置项（upsert）。"""
     with _make_connection() as conn:
         for key, value in data.items():
             conn.execute(
                 """
-                INSERT INTO settings (key, value, description, updated_at)
-                VALUES (?, ?, COALESCE((SELECT description FROM settings WHERE key=?), ''), datetime('now'))
-                ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+                INSERT INTO settings (user_id, key, value, description, updated_at)
+                VALUES (?, ?, ?, COALESCE((SELECT description FROM settings WHERE user_id=? AND key=?), ''), datetime('now'))
+                ON CONFLICT(user_id, key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
                 """,
-                (key, value, key),
+                (user_id, key, value, user_id, key),
             )
         conn.commit()

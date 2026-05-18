@@ -1,36 +1,21 @@
 <template>
-  <div class="app-layout" :class="{ 'sidebar-collapsed': sidebarCollapsed }">
+  <!-- 登录页：全屏展示，不显示侧边栏 -->
+  <router-view v-if="isLoginPage" />
+
+  <!-- 主布局：侧边栏 + 内容区 -->
+  <div
+    v-else
+    class="app-layout"
+    :class="{ 'sidebar-collapsed': sidebarCollapsed }"
+  >
     <aside class="sidebar">
       <!-- Logo -->
       <div class="sidebar-logo">
         <div class="logo-mark">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-            <defs>
-              <linearGradient id="lg1" x1="2" y1="2" x2="22" y2="22">
-                <stop stop-color="#6366f1" />
-                <stop offset="1" stop-color="#a855f7" />
-              </linearGradient>
-            </defs>
-            <path d="M12 2L2 7l10 5 10-5-10-5z" fill="url(#lg1)" />
-            <path
-              d="M2 17l10 5 10-5"
-              stroke="url(#lg1)"
-              stroke-width="1.8"
-              stroke-linecap="round"
-              fill="none"
-            />
-            <path
-              d="M2 12l10 5 10-5"
-              stroke="url(#lg1)"
-              stroke-width="1.8"
-              stroke-linecap="round"
-              fill="none"
-              opacity="0.6"
-            />
-          </svg>
+          <img src="/logo.png" alt="Logo" class="logo-img" />
         </div>
         <div class="logo-text">
-          <div class="logo-name">AscendFlow</div>
+          <div class="logo-name">WeSmartFlow</div>
           <div class="logo-tagline">本地知识大脑</div>
         </div>
         <button
@@ -172,16 +157,16 @@
         <router-link
           to="/profile"
           class="sidebar-user"
-          :title="sidebarCollapsed ? 'Rony Yuan' : ''"
+          :title="sidebarCollapsed ? userName : ''"
         >
           <div
             class="avatar"
             style="width: 30px; height: 30px; font-size: 12px; font-weight: 700"
           >
-            袁
+            {{ avatarChar }}
           </div>
           <div class="user-info">
-            <div class="user-name">Rony Yuan</div>
+            <div class="user-name">{{ userName }}</div>
             <div class="user-sub">
               <span
                 class="badge badge-brand"
@@ -202,6 +187,27 @@
             <polyline points="9 18 15 12 9 6" />
           </svg>
         </router-link>
+
+        <!-- 登出 -->
+        <button
+          class="logout-btn"
+          :title="sidebarCollapsed ? '退出登录' : ''"
+          @click="handleLogout"
+        >
+          <svg
+            width="15"
+            height="15"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+          >
+            <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4" />
+            <polyline points="16 17 21 12 16 7" />
+            <line x1="21" y1="12" x2="9" y2="12" />
+          </svg>
+          <span class="logout-label">退出登录</span>
+        </button>
       </div>
     </aside>
 
@@ -217,10 +223,60 @@
 </template>
 
 <script setup>
-import { ref } from "vue";
+import { ref, computed, watch } from "vue";
+
+import { useRoute, useRouter } from "vue-router";
 import { useTheme } from "./composables/useTheme.js";
+import { useAuth } from "./composables/useAuth.js";
+import { userApi } from "./api";
+
+const route = useRoute();
+const router = useRouter();
 const { isDark, toggleTheme } = useTheme();
+const {
+  clearAuth,
+  userName: authUserName,
+  isAuthenticated,
+  setUserProfile,
+} = useAuth();
 const sidebarCollapsed = ref(false);
+
+// 是否在登录页
+const isLoginPage = computed(() => route.path === "/login");
+
+// ── 用户信息（使用全局共享的 userProfile） ──────────────────────
+const userName = computed(() => authUserName.value || "User");
+const avatarChar = computed(() => {
+  const name = userName.value || "U";
+  return name.charAt(0).toUpperCase();
+});
+
+// 获取完整用户信息并同步到全局
+async function fetchUserInfo() {
+  try {
+    const data = await userApi.getMe();
+    setUserProfile(data);
+  } catch (e) {
+    console.error("获取用户信息失败", e);
+  }
+}
+
+// 监听认证状态和路由变化，登录后自动拉取用户信息
+watch(
+  () => [isLoginPage.value, isAuthenticated.value],
+  ([onLogin, authed]) => {
+    if (!onLogin && authed) {
+      fetchUserInfo();
+    }
+  },
+  { immediate: true },
+);
+
+// 登出
+function handleLogout() {
+  clearAuth();
+  router.replace("/login");
+}
 
 // 核心：知识图谱相关
 const coreNav = [
@@ -313,7 +369,8 @@ const personalNav = [
 .sidebar-collapsed .nav-group-label,
 .sidebar-collapsed .tt-label,
 .sidebar-collapsed .user-info,
-.sidebar-collapsed .sidebar-user > svg {
+.sidebar-collapsed .sidebar-user > svg,
+.sidebar-collapsed .logout-label {
   display: none;
 }
 .sidebar-collapsed .sidebar-logo {
@@ -335,6 +392,10 @@ const personalNav = [
   padding: 6px;
 }
 .sidebar-collapsed .sidebar-user {
+  justify-content: center;
+  padding: 7px;
+}
+.sidebar-collapsed .logout-btn {
   justify-content: center;
   padding: 7px;
 }
@@ -379,12 +440,17 @@ const personalNav = [
   width: 32px;
   height: 32px;
   border-radius: 8px;
-  background: rgba(99, 102, 241, 0.1);
-  border: 1px solid rgba(99, 102, 241, 0.18);
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  overflow: hidden;
+}
+.logo-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 8px;
 }
 .logo-name {
   font-size: 13px;
@@ -559,6 +625,28 @@ const personalNav = [
 .user-info {
   flex: 1;
   min-width: 0;
+}
+
+/* Logout */
+.logout-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  font-family: inherit;
+  width: 100%;
+  transition: var(--transition);
+}
+.logout-btn:hover {
+  background: var(--red-dim);
+  color: var(--red);
 }
 
 /* Main */

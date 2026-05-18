@@ -3,13 +3,9 @@ update_mastery：Agent 根据对话判断用户掌握情况，更新节点掌握
 """
 
 from __future__ import annotations
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-
-import sqlite3
 from agent_core.tool.base import BaseTool
+from database import get_db
 
 
 class UpdateMasteryTool(BaseTool):
@@ -36,31 +32,30 @@ class UpdateMasteryTool(BaseTool):
         "required": ["node_id", "delta"],
     }
 
-    def __init__(self, db: sqlite3.Connection, user_id: str, on_result_hook=None):
+    def __init__(self, user_id: str, on_result_hook=None):
         super().__init__(on_result_hook=on_result_hook)
-        self._db = db
         self._user_id = user_id
 
     def run(self, node_id: str, delta: float, reason: str = "") -> str:
-        # 查当前掌握度
-        row = self._db.execute(
-            "SELECT mastery_level FROM nodes WHERE id=? AND user_id=?",
-            (node_id, self._user_id),
-        ).fetchone()
+        with get_db() as conn:
+            # 查当前掌採度
+            row = conn.execute(
+                "SELECT mastery_level FROM nodes WHERE id=? AND user_id=?",
+                (node_id, self._user_id),
+            ).fetchone()
 
-        if not row:
-            return f"Error: 未找到节点 {node_id}"
+            if not row:
+                return f"Error: 未找到节点 {node_id}"
 
-        current = row["mastery_level"]
-        new_level = max(0.0, min(1.0, current + delta))
+            current = row["mastery_level"]
+            new_level = max(0.0, min(1.0, current + delta))
 
-        self._db.execute(
-            "UPDATE nodes SET mastery_level=? WHERE id=?", (new_level, node_id)
-        )
-        self._db.commit()
+            conn.execute(
+                "UPDATE nodes SET mastery_level=? WHERE id=?", (new_level, node_id)
+            )
 
         direction = "提升" if delta > 0 else "下降"
         return (
-            f"节点 {node_id} 掌握度{direction} {abs(delta):.2f}，"
+            f"节点 {node_id} 掌採度{direction} {abs(delta):.2f}，"
             f"从 {current:.2f} → {new_level:.2f}。{reason}"
         )

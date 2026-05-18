@@ -73,6 +73,7 @@ class OpenAIImageGenTool(BaseTool):
         model: Optional[str] = None,
         steps: Optional[int] = None,
         guidance_scale: Optional[float] = None,
+        before_call_hook=None,
     ):
         """
         Args:
@@ -81,13 +82,14 @@ class OpenAIImageGenTool(BaseTool):
             model:          模型名称，为 None 时由服务端决定。
             steps:          推理步数（1~150），为 None 时由服务端决定。
             guidance_scale: CFG 引导系数（1.0~20.0），为 None 时由服务端决定。
+            before_call_hook: 执行前回调（如额度检查）。
         """
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.steps = steps
         self.guidance_scale = guidance_scale
-        super().__init__()
+        super().__init__(before_call_hook=before_call_hook)
 
     # ── 内部工具方法 ──
 

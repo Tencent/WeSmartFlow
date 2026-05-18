@@ -10,7 +10,7 @@
  * GET    /api/documents/:id/summary  获取文档摘要信息
  * DELETE /api/documents/:id       删除文档
  */
-import { api, BASE_URL } from "./base.js";
+import { api } from "./base.js";
 
 export const documentApi = {
   // 获取文档列表
@@ -26,17 +26,18 @@ export const documentApi = {
   upload: (file) => {
     const formData = new FormData();
     formData.append("file", file); // 后端 FastAPI 接收字段名是 'file'
-    return fetch(`${BASE_URL}/api/documents/upload`, {
-      method: "POST",
-      body: formData,
-      // 不设置 Content-Type，让浏览器自动处理 multipart boundary
-    }).then(async (r) => {
-      if (!r.ok) {
-        const err = await r.json().catch(() => ({}));
-        throw new Error(err.detail || err.message || `上传失败 ${r.status}`);
-      }
-      return r.json();
-    });
+    return api
+      .postRaw("/api/documents/upload", {
+        body: formData,
+        // 不设置 Content-Type，让浏览器自动处理 multipart boundary
+      })
+      .then(async (r) => {
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          throw new Error(err.detail || err.message || `上传失败 ${r.status}`);
+        }
+        return r.json();
+      });
   },
 
   // 手动触发（重新）提取知识节点

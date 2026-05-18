@@ -8,20 +8,7 @@ import subprocess
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from dotenv import load_dotenv
-
 from .base import BaseTool
-
-load_dotenv()
-
-DEFAULT_BEAMER_TEMPLATE_DIR = (
-    Path(
-        os.getenv("BEAMER_TEMPLATE_DIR", "")
-        or str(Path(__file__).resolve().parents[2] / "SimplePlus-BeamerTheme")
-    )
-    .expanduser()
-    .resolve()
-)
 
 
 class LatexPdfCompileTool(BaseTool):
@@ -56,17 +43,19 @@ class LatexPdfCompileTool(BaseTool):
         "required": ["tex_path"],
     }
 
-    def __init__(self, template_dir: Optional[str] = None):
-        self.default_template_dir = Path(
-            template_dir or DEFAULT_BEAMER_TEMPLATE_DIR
-        ).resolve()
+    def __init__(self, template_dir: Optional[Path] = None):
+        self.default_template_dir = template_dir.resolve() if template_dir else None
         super().__init__()
 
     # ── 内部工具方法 ──
 
     def _resolve_template_dir(self) -> Optional[Path]:
         """返回模板目录，不存在则返回 None（不强制要求）。"""
-        if self.default_template_dir.exists() and self.default_template_dir.is_dir():
+        if (
+            self.default_template_dir
+            and self.default_template_dir.exists()
+            and self.default_template_dir.is_dir()
+        ):
             return self.default_template_dir
         return None
 
@@ -220,7 +209,6 @@ class LatexPdfCompileTool(BaseTool):
 latex_pdf_compile_tool = LatexPdfCompileTool()
 
 __all__ = [
-    "DEFAULT_BEAMER_TEMPLATE_DIR",
     "LatexPdfCompileTool",
     "latex_pdf_compile_tool",
 ]

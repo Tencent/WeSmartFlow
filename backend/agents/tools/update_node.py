@@ -3,13 +3,8 @@ update_node：Agent 已整理好新内容后，更新知识图谱中某个节点
 """
 
 from __future__ import annotations
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import json
-import sqlite3
 from agent_core.tool.base import BaseTool
 from models.node import NodeContent, NodeUpdate
 from repositories.node_repo import NodeRepository
@@ -63,11 +58,10 @@ class UpdateNodeTool(BaseTool):
         "required": ["node_id"],
     }
 
-    def __init__(self, db: sqlite3.Connection, user_id: str):
+    def __init__(self, user_id: str):
         super().__init__()
-        self._db = db
         self._user_id = user_id
-        self._repo = NodeRepository(db)
+        self._repo = NodeRepository()
 
     def run(
         self,

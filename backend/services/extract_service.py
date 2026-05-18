@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import json
 import logging
-import sqlite3
 from pathlib import Path
 from typing import Dict, Any
 
@@ -20,8 +19,8 @@ from agent_core.builtins import BUILTIN_SKILLS_DIR
 from agent_core.skills.loader import SkillsLoader
 from agent_core.tool.filesystem import ReadFileTool, ListDirTool
 from agent_core.tool.registry import ToolRegistry
-from agents.base_agent import BaseAgent
-from agents.base_context import AgentContextBuilder
+from agents import ChatAgent
+from agent_core.context import SkillPromptContextBuilder
 from agents.tools.create_node import DocumentCreateNodeTool
 from agents.tools.search_nodes import SearchNodesTool
 from repositories import DocumentRepository
@@ -35,11 +34,9 @@ _AGENTS_SKILLS_DIR = Path(__file__).parent.parent / "agents" / "prompts" / "skil
 
 
 class ExtractService:
-    def __init__(self, db: sqlite3.Connection):
-        self.db = db
-        self.doc_repo = DocumentRepository(db)
-        self.node_repo = NodeRepository(db)
-        self.llm = get_llm()
+    def __init__(self):
+        self.doc_repo = DocumentRepository()
+        self.node_repo = NodeRepository()
 
     async def extract(self, user_id: str, doc_id: str) -> list[str]:
         """用 ExtractAgent 提取文档中的知识节点，返回新创建的 node_id 列表。"""
@@ -66,16 +63,13 @@ class ExtractService:
 
             self.doc_repo.set_node_ids(doc_id, node_ids)
             self.doc_repo.set_status(doc_id, "ready")
-
-            # 手动提交事务，确保所有状态更新在一个事务中完成
-            self.db.commit()
+            # 短连接模式下 _execute 已自动 commit
 
             return node_ids
         except Exception as e:
             logger.exception("文档提取失败: %s", doc_id)
             self.doc_repo.set_status(doc_id, "failed", str(e))
-            # 在异常情况下也提交事务，确保错误状态被记录
-            self.db.commit()
+            # 短连接模式下 _execute 已自动 commit
             raise
 
     async def _process_large_document(
@@ -141,9 +135,8 @@ class ExtractService:
 
         # 组装强大的工具集，使用hook机制
         tools = [
-            SearchNodesTool(db=self.db, user_id=user_id),
+            SearchNodesTool(user_id=user_id),
             DocumentCreateNodeTool(
-                db=self.db,
                 user_id=user_id,
                 document_id=doc_id,
                 on_result_hook=_node_creation_hook,
@@ -159,7 +152,7 @@ class ExtractService:
         ]
 
         # 使用更强的上下文构建器
-        context_builder = AgentContextBuilder(
+        context_builder = SkillPromptContextBuilder(
             prompt_file=Path(__file__).parent.parent
             / "agents"
             / "prompts"
@@ -167,8 +160,8 @@ class ExtractService:
             skills_loader=SkillsLoader(workspace_skills_dir=_AGENTS_SKILLS_DIR),
         )
 
-        agent = BaseAgent(
-            llm=self.llm,
+        agent = ChatAgent(
+            llm=get_llm(user_id),
             context_builder=context_builder,
             tool_registry=ToolRegistry(tools),
             max_steps=50,  # 增加最大步数以获得更深入的分析
@@ -286,3 +279,33 @@ class ExtractService:
                 )
 
         return segments
+
+    # ------------------------------------------------------------------
+    # 公开 API：供 router / 其他 service 使用
+    # ------------------------------------------------------------------
+
+    def read_content(self, file_path: str, file_type: str) -> str:
+        """读取文档原始文本内容（公开接口）。
+
+        包装内部 ``_read_file``，对外提供稳定的语义化入口，避免调用方依赖私有方法。
+        """
+        return self._read_file(file_path, file_type)
+
+    def segment_content(self, text: str, doc_type: str) -> list[dict]:
+        """将文档文本分段（公开接口）。
+
+        包装内部 ``_segment_document``。
+        """
+        return self._segment_document(text, doc_type)
+
+    def read_and_segment(
+        self, file_path: str, file_type: str
+    ) -> tuple[str, list[dict]]:
+        """一次性读取文档内容并完成分段，便于 router 直接消费。
+
+        Returns:
+            ``(content, segments)`` 二元组。
+        """
+        content = self._read_file(file_path, file_type)
+        segments = self._segment_document(content, file_type)
+        return content, segments

@@ -8,9 +8,9 @@ QuizService：出题与评分
 
 from __future__ import annotations
 
-import json
 import logging
-import sqlite3
+
+from json_repair import repair_json
 
 from repositories import NodeRepository
 from repositories.quiz_repo import QuizRepository
@@ -20,13 +20,34 @@ from services.memory_service import MemoryService
 logger = logging.getLogger(__name__)
 
 
+def _parse_llm_json(raw: str) -> dict:
+    """解析 LLM 返回的 JSON，自动处理代码块包裹、非法转义等常见问题。"""
+    text = raw.strip()
+    if "```" in text:
+        text = text.split("```")[1].lstrip("json").strip()
+    return repair_json(text, return_objects=True)
+
+
 class QuizService:
-    def __init__(self, db: sqlite3.Connection):
-        self.db = db
-        self.node_repo = NodeRepository(db)
-        self.quiz_repo = QuizRepository(db)
-        self.memory_service = MemoryService(db)
-        self.llm = get_llm()
+    def __init__(self):
+        self.node_repo = NodeRepository()
+        self.quiz_repo = QuizRepository()
+        self.memory_service = MemoryService()
+
+    # ── 权属校验 ──────────────────────────────────────
+    def _assert_node_owner(self, user_id: str, node_id: str):
+        """断言节点存在且属于该用户；否则抛 ValueError（上层译为 404）。"""
+        node = self.node_repo.get_by_id(node_id)
+        if not node or node.user_id != user_id:
+            raise ValueError(f"节点 {node_id} 不存在")
+        return node
+
+    def _assert_quiz_owner(self, user_id: str, quiz_id: str):
+        """断言题目存在且属于该用户；否则抛 ValueError（上层译为 404）。"""
+        quiz = self.quiz_repo.get_by_id(quiz_id)
+        if not quiz or quiz.user_id != user_id:
+            raise ValueError(f"题目 {quiz_id} 不存在")
+        return quiz
 
     async def generate_quiz(
         self,
@@ -36,23 +57,17 @@ class QuizService:
         quiz_type: str = "multiple_choice",
     ) -> dict:
         """为某节点生成一道题"""
-        node = self.node_repo.get_by_id(node_id)
-        if not node:
-            raise ValueError(f"节点 {node_id} 不存在")
+        node = self._assert_node_owner(user_id, node_id)
 
         prompt = self._build_prompt(node, quiz_type)
-        response = await self.llm.async_think(
+        response = await get_llm(user_id).async_think(
             messages=[
                 {"role": "system", "content": "你是出题专家，只输出 JSON。"},
                 {"role": "user", "content": prompt},
             ]
         )
 
-        raw = response.content.strip()
-        if "```" in raw:
-            raw = raw.split("```")[1].lstrip("json").strip()
-
-        quiz_data = json.loads(raw)
+        quiz_data = _parse_llm_json(response.content)
         quiz = self.quiz_repo.create(
             user_id=user_id,
             node_id=node_id,
@@ -65,11 +80,9 @@ class QuizService:
         )
         return quiz.model_dump(mode="json")
 
-    async def submit_answer(self, quiz_id: str, user_answer: str) -> dict:
+    async def submit_answer(self, user_id: str, quiz_id: str, user_answer: str) -> dict:
         """用户提交答案，自动评分并更新记忆状态"""
-        quiz = self.quiz_repo.get_by_id(quiz_id)
-        if not quiz:
-            raise ValueError(f"题目 {quiz_id} 不存在")
+        quiz = self._assert_quiz_owner(user_id, quiz_id)
 
         # 评分
         if quiz.quiz_type == "multiple_choice":
@@ -83,14 +96,16 @@ class QuizService:
         else:
             # 主观题（填空题 / 简答题）：LLM 评分
             is_correct, score = await self._llm_grade(
-                quiz.question, quiz.correct_answer, user_answer
+                user_id, quiz.question, quiz.correct_answer, user_answer
             )
 
         self.quiz_repo.submit_answer(quiz_id, user_answer, is_correct, score)
 
         # SM-2 quality: score 映射到 0~5
         quality = round(score * 5)
-        memory_result = self.memory_service.review_node(quiz.node_id, quality)
+        memory_result = self.memory_service.review_node_for_user(
+            user_id, quiz.node_id, quality
+        )
 
         return {
             "quiz_id": quiz_id,
@@ -207,7 +222,7 @@ class QuizService:
         return ua_bool == ca_bool
 
     async def _llm_grade(
-        self, question: str, correct_answer: str, user_answer: str
+        self, user_id: str, question: str, correct_answer: str, user_answer: str
     ) -> tuple[bool, float]:
         """LLM 评分主观题，返回 (is_correct, score 0~1)"""
         prompt = f"""请评估以下答题的准确性。
@@ -221,14 +236,11 @@ class QuizService:
 
 score 为 0~1 的浮点数，1.0 表示完全正确。"""
 
-        response = await self.llm.async_think(
+        response = await get_llm(user_id).async_think(
             messages=[{"role": "user", "content": prompt}]
         )
         try:
-            raw = response.content.strip()
-            if "```" in raw:
-                raw = raw.split("```")[1].lstrip("json").strip()
-            data = json.loads(raw)
+            data = _parse_llm_json(response.content)
             score = float(data.get("score", 0.5))
             return score >= 0.6, score
         except Exception:  # pylint: disable=broad-except

@@ -3,13 +3,9 @@ search_nodes：让 Agent 在知识图谱中搜索相关节点
 """
 
 from __future__ import annotations
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-
-import sqlite3
 from agent_core.tool.base import BaseTool
+from database import get_db
 
 
 class SearchNodesTool(BaseTool):
@@ -36,23 +32,23 @@ class SearchNodesTool(BaseTool):
         "required": ["query"],
     }
 
-    def __init__(self, db: sqlite3.Connection, user_id: str):
+    def __init__(self, user_id: str):
         super().__init__()
-        self._db = db
         self._user_id = user_id
 
     def run(self, query: str, limit: int = 5) -> str:
-        cursor = self._db.execute(
-            """
-            SELECT id, title, description, mastery_level, due_date
-            FROM nodes
-            WHERE user_id=? AND (title LIKE ? OR description LIKE ?)
-            ORDER BY mastery_level ASC
-            LIMIT ?
-            """,
-            (self._user_id, f"%{query}%", f"%{query}%", limit),
-        )
-        rows = cursor.fetchall()
+        with get_db() as conn:
+            cursor = conn.execute(
+                """
+                SELECT id, title, description, mastery_level, due_date
+                FROM nodes
+                WHERE user_id=? AND (title LIKE ? OR description LIKE ?)
+                ORDER BY mastery_level ASC
+                LIMIT ?
+                """,
+                (self._user_id, f"%{query}%", f"%{query}%", limit),
+            )
+            rows = cursor.fetchall()
         if not rows:
             return f"未找到与「{query}」相关的知识节点。"
 

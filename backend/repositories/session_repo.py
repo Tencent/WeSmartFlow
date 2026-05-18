@@ -60,14 +60,13 @@ class SessionRepository(BaseRepository):
     def create(self, user_id: str, data: SessionCreate) -> SessionSchema:
         session_id = new_id()
         now = utcnow_str()
-        messages_file = str(SESSIONS_DIR / f"{session_id}.json")
 
         self._execute(
             """
             INSERT INTO sessions
               (id, user_id, title, topic, status, node_ids_covered,
-               files, message_count, duration_minutes, messages_file, created_at, ended_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+               files, message_count, duration_minutes, created_at, ended_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 session_id,
@@ -79,13 +78,12 @@ class SessionRepository(BaseRepository):
                 _dumps([]),
                 0,
                 0,
-                messages_file,
                 now,
                 None,
             ),
         )
         # 初始化空消息文件
-        Path(messages_file).write_text("[]", encoding="utf-8")
+        self._messages_path(session_id).write_text("[]", encoding="utf-8")
         return self.get_by_id(session_id)
 
     def append_message(self, session_id: str, message: MessageSchema) -> None:
@@ -93,13 +91,9 @@ class SessionRepository(BaseRepository):
         messages = self._read_messages(session_id)
         messages.append(message.model_dump(mode="json"))
 
-        row = self._fetchone(
-            "SELECT messages_file FROM sessions WHERE id=?", (session_id,)
+        self._messages_path(session_id).write_text(
+            json.dumps(messages, ensure_ascii=False, indent=2), encoding="utf-8"
         )
-        if row:
-            self._resolve_messages_path(row["messages_file"]).write_text(
-                json.dumps(messages, ensure_ascii=False, indent=2), encoding="utf-8"
-            )
         self._execute(
             "UPDATE sessions SET message_count=? WHERE id=?",
             (len(messages), session_id),
@@ -132,23 +126,41 @@ class SessionRepository(BaseRepository):
     def set_title(self, session_id: str, title: str) -> None:
         self._execute("UPDATE sessions SET title=? WHERE id=?", (title, session_id))
 
-    @staticmethod
-    def _resolve_messages_path(raw: str) -> Path:
-        """将 messages_file 字段解析为绝对路径（兼容历史相对路径记录）"""
-        p = Path(raw)
-        if not p.is_absolute():
-            from config import ROOT_DIR
+    def complete(
+        self,
+        session_id: str,
+        duration_minutes: int,
+        node_ids: list[str],
+        files: list[dict],
+    ) -> None:
+        """收尾会话：标记 completed，并写入 duration / node_ids_covered / files / ended_at。"""
+        now = utcnow_str()
+        self._execute(
+            """
+            UPDATE sessions
+               SET status='completed',
+                   duration_minutes=?,
+                   node_ids_covered=?,
+                   files=?,
+                   ended_at=?
+             WHERE id=?
+            """,
+            (
+                duration_minutes,
+                _dumps(node_ids),
+                _dumps(files),
+                now,
+                session_id,
+            ),
+        )
 
-            p = ROOT_DIR / p
-        return p
+    @staticmethod
+    def _messages_path(session_id: str) -> Path:
+        """根据 session_id 直接构造消息文件的绝对路径"""
+        return SESSIONS_DIR / f"{session_id}.json"
 
     def _read_messages(self, session_id: str) -> list[dict]:
-        row = self._fetchone(
-            "SELECT messages_file FROM sessions WHERE id=?", (session_id,)
-        )
-        if not row:
-            return []
-        path = self._resolve_messages_path(row["messages_file"])
+        path = self._messages_path(session_id)
         if not path.exists():
             return []
         try:

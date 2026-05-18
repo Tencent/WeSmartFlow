@@ -8,13 +8,8 @@ create_node：Agent 在知识图谱中创建新的知识节点
 """
 
 from __future__ import annotations
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import json
-import sqlite3
 from abc import abstractmethod
 from agent_core.tool.base import BaseTool
 from models.node import NodeCreate, NodeContent, NodeOrigin, NodeRelation, NodeUpdate
@@ -91,11 +86,10 @@ class BaseCreateNodeTool(BaseTool):
         "required": ["title", "description"],
     }
 
-    def __init__(self, db: sqlite3.Connection, user_id: str, on_result_hook=None):
+    def __init__(self, user_id: str, on_result_hook=None):
         super().__init__(on_result_hook=on_result_hook)
-        self._db = db
         self._user_id = user_id
-        self._repo = NodeRepository(db)
+        self._repo = NodeRepository()
 
     @abstractmethod
     def _get_origins(self, description: str) -> list[NodeOrigin]:
@@ -116,13 +110,11 @@ class BaseCreateNodeTool(BaseTool):
         contrast_node_ids: list[str] = None,
     ) -> str:
         # 检查同名节点是否已存在，避免重复创建
-        existing = self._db.execute(
-            "SELECT id FROM nodes WHERE user_id=? AND title=?", (self._user_id, title)
-        ).fetchone()
-        if existing:
+        existing_id = self._repo.find_by_title(self._user_id, title)
+        if existing_id:
             return json.dumps(
                 {
-                    "node_id": existing["id"],
+                    "node_id": existing_id,
                     "created": False,
                     "message": f"节点「{title}」已存在，跳过创建。",
                 },
@@ -144,8 +136,6 @@ class BaseCreateNodeTool(BaseTool):
                 origins=self._get_origins(description),
             ),
         )
-
-        self._db.commit()
 
         new_relations = list(node.relations)
         # 已处理过的节点 id 集合，防止同一节点被多种关系重复处理
@@ -203,12 +193,10 @@ class BaseCreateNodeTool(BaseTool):
         if new_relations:
             nodes_to_update[node.id] = NodeUpdate(relations=new_relations)
 
-        # 在一个事务中批量更新所有节点关系
+        # 批量更新所有节点关系
         if nodes_to_update:
             for node_id, update_data in nodes_to_update.items():
                 self._repo.update(node_id, update_data)
-            # 手动提交事务，确保所有关系更新在一个事务中完成
-            self._db.commit()
 
         linked_count = len(new_relations)
         result = {
@@ -229,10 +217,8 @@ class BaseCreateNodeTool(BaseTool):
 class SessionCreateNodeTool(BaseCreateNodeTool):
     """来源为对话会话，用于对话中动态提取并创建知识节点。"""
 
-    def __init__(
-        self, db: sqlite3.Connection, user_id: str, session_id: str, on_result_hook=None
-    ):
-        super().__init__(db, user_id, on_result_hook=on_result_hook)
+    def __init__(self, user_id: str, session_id: str, on_result_hook=None):
+        super().__init__(user_id, on_result_hook=on_result_hook)
         self._session_id = session_id
 
     def _get_origins(self, description: str) -> list[NodeOrigin]:
@@ -251,14 +237,13 @@ class DocumentCreateNodeTool(BaseCreateNodeTool):
 
     def __init__(
         self,
-        db: sqlite3.Connection,
         user_id: str,
         document_id: str,
         location: str = "",
         excerpt: str = "",
         on_result_hook=None,
     ):
-        super().__init__(db, user_id, on_result_hook=on_result_hook)
+        super().__init__(user_id, on_result_hook=on_result_hook)
         self._document_id = document_id
         self._location = location
         self._excerpt = excerpt

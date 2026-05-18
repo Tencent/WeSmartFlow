@@ -6,12 +6,11 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sqlite3
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from database import get_db_dep
 from models.session import SessionCreate, ChatMessage, SessionSchema, SessionDetail
 from services import TutorService
 from agent_core.agent.base import (
@@ -23,25 +22,27 @@ from agent_core.agent.base import (
     NodeCreatedEvent,
     MasteryUpdatedEvent,
 )
+from dependencies import get_current_user
+from services.quota import QuotaExceededError
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
-USER_ID = "default"
-
 
 @router.get("", response_model=list[SessionSchema])
-def list_sessions(db: sqlite3.Connection = Depends(get_db_dep)):
-    return TutorService(db).session_repo.get_all(USER_ID)
+def list_sessions(user_id: str = Depends(get_current_user)):
+    return TutorService().list_sessions(user_id)
 
 
 @router.post("", response_model=SessionSchema, status_code=201)
-def create_session(data: SessionCreate, db: sqlite3.Connection = Depends(get_db_dep)):
-    return TutorService(db).create_session(USER_ID, data)
+def create_session(data: SessionCreate, user_id: str = Depends(get_current_user)):
+    return TutorService().create_session(user_id, data)
 
 
 @router.get("/{session_id}", response_model=SessionDetail)
-def get_session(session_id: str, db: sqlite3.Connection = Depends(get_db_dep)):
-    detail = TutorService(db).session_repo.get_detail(session_id)
+def get_session(session_id: str, user_id: str = Depends(get_current_user)):
+    detail = TutorService().get_session_detail(user_id, session_id)
     if not detail:
         raise HTTPException(404, "会话不存在")
     return detail
@@ -52,7 +53,7 @@ async def chat_stream(
     request: Request,
     session_id: str,
     body: ChatMessage,
-    db: sqlite3.Connection = Depends(get_db_dep),
+    user_id: str = Depends(get_current_user),
 ):
     """
     SSE 流式聊天接口。
@@ -70,111 +71,97 @@ async def chat_stream(
     - mastery_updated — 掌握度更新  { type, node_id, delta }
     - error         — 错误          { type, message }
     """
-    service = TutorService(db)
-    queue: asyncio.Queue[str | None] = asyncio.Queue()
+    service = TutorService()
 
-    def _serialize(event) -> str | None:
-        """将 Agent 事件序列化为 SSE data 行。"""
-        if isinstance(event, AgentThinkEvent):
-            data = {"type": "thinking", "content": event.content, "step": event.step}
-        elif isinstance(event, AgentToolCallEvent):
-            data = {
-                "type": "tool_call",
-                "tool": event.tool_name,
-                "args": event.arguments,
-                "step": event.step,
-            }
-        elif isinstance(event, AgentToolResultEvent):
-            data = {
-                "type": "tool_result",
-                "tool": event.tool_name,
-                "result": event.result,
-                "step": event.step,
-            }
-        elif isinstance(event, AgentFinalEvent):
-            return None  # 特殊处理，见下方
-        elif isinstance(event, FileCreatedEvent):
-            data = {"type": "file_created", "file_id": event.file_id}
-        elif isinstance(event, NodeCreatedEvent):
-            data = {
-                "type": "node_created",
-                "node_id": event.node_id,
-                "title": event.title,
-            }
-        elif isinstance(event, MasteryUpdatedEvent):
-            data = {
-                "type": "mastery_updated",
-                "node_id": event.node_id,
-                "delta": event.delta,
-            }
-        else:
-            return None
-        return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
-
-    async def produce():
-        """在后台 task 中运行 Agent，把 SSE 行放入队列，结束时放入 None 哨兵。"""
+    async def event_stream():
+        """直接迭代 Agent 事件流，序列化为 SSE 格式输出。"""
         mastery_changes: dict[str, float] = {}
         try:
-            async for event in service.stream_chat(USER_ID, session_id, body.content):
+            async for event in service.stream_chat(user_id, session_id, body.content):
+                # 检查客户端是否断开
+                if await request.is_disconnected():
+                    logger.info("客户端断开，停止生成")
+                    break
+
                 if isinstance(event, MasteryUpdatedEvent):
                     mastery_changes[event.node_id] = (
                         mastery_changes.get(event.node_id, 0.0) + event.delta
                     )
-                if isinstance(event, AgentFinalEvent):
+                    data = {
+                        "type": "mastery_updated",
+                        "node_id": event.node_id,
+                        "delta": event.delta,
+                    }
+                    yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+                elif isinstance(event, AgentFinalEvent):
                     text_data = json.dumps(
                         {"type": "text_reply", "text": event.content},
                         ensure_ascii=False,
                     )
-                    await queue.put(f"data: {text_data}\n\n")
+                    yield f"data: {text_data}\n\n"
                     done_data = json.dumps(
                         {"type": "done", "mastery_changes": mastery_changes},
                         ensure_ascii=False,
                     )
-                    await queue.put(f"data: {done_data}\n\n")
-                else:
-                    line = _serialize(event)
-                    if line:
-                        await queue.put(line)
+                    yield f"data: {done_data}\n\n"
+                elif isinstance(event, AgentThinkEvent):
+                    data = {
+                        "type": "thinking",
+                        "content": event.content,
+                        "step": event.step,
+                    }
+                    yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+                elif isinstance(event, AgentToolCallEvent):
+                    data = {
+                        "type": "tool_call",
+                        "tool": event.tool_name,
+                        "args": event.arguments,
+                        "step": event.step,
+                    }
+                    yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+                elif isinstance(event, AgentToolResultEvent):
+                    data = {
+                        "type": "tool_result",
+                        "tool": event.tool_name,
+                        "result": event.result,
+                        "step": event.step,
+                    }
+                    yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+                elif isinstance(event, FileCreatedEvent):
+                    data = {"type": "file_created", "file_id": event.file_id}
+                    yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+                elif isinstance(event, NodeCreatedEvent):
+                    data = {
+                        "type": "node_created",
+                        "node_id": event.node_id,
+                        "title": event.title,
+                    }
+                    yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
         except asyncio.CancelledError:
             pass  # 客户端断开，静默退出
+        except QuotaExceededError as e:
+            err = json.dumps(
+                {
+                    "type": "error",
+                    "message": str(e),
+                    "code": "quota_exceeded",
+                    "category": e.category,
+                    "limit": e.limit,
+                },
+                ensure_ascii=False,
+            )
+            yield f"data: {err}\n\n"
         except ValueError as e:
             err = json.dumps({"type": "error", "message": str(e)}, ensure_ascii=False)
-            await queue.put(f"data: {err}\n\n")
+            yield f"data: {err}\n\n"
         except Exception as e:  # pylint: disable=broad-except
             err = json.dumps(
                 {"type": "error", "message": f"服务器内部错误：{e}"}, ensure_ascii=False
             )
-            await queue.put(f"data: {err}\n\n")
-        finally:
-            await queue.put(None)  # 哨兵，通知消费方结束
-
-    async def event_generator():
-        task = asyncio.create_task(produce())
-        try:
-            while True:
-                # 用超时轮询方式：每次最多等 0.3s，期间检查客户端是否断开
-                try:
-                    item = await asyncio.wait_for(queue.get(), timeout=0.3)
-                except asyncio.TimeoutError:
-                    # 队列暂时没数据，检查客户端是否断开
-                    if await request.is_disconnected():
-                        task.cancel()
-                        break
-                    continue
-
-                if item is None:
-                    break  # 哨兵，正常结束
-                yield item
-        finally:
-            if not task.done():
-                task.cancel()
-            try:
-                await task
-            except (asyncio.CancelledError, Exception):  # pylint: disable=broad-except
-                pass
+            yield f"data: {err}\n\n"
 
     return StreamingResponse(
-        event_generator(),
+        event_stream(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -189,11 +176,13 @@ class DurationUpdate(BaseModel):
 
 @router.patch("/{session_id}/duration")
 def update_duration(
-    session_id: str, body: DurationUpdate, db: sqlite3.Connection = Depends(get_db_dep)
+    session_id: str,
+    body: DurationUpdate,
+    user_id: str = Depends(get_current_user),
 ):
     """记录本次会话的学习时长（前端离开页面时调用）"""
     try:
-        TutorService(db).record_duration(USER_ID, session_id, body.minutes)
+        TutorService().record_duration(user_id, session_id, body.minutes)
         return {"ok": True}
     except ValueError as e:
         raise HTTPException(400, str(e))

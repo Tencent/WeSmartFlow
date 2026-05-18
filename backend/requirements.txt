@@ -1,6 +1,7 @@
 annotated-doc==0.0.4
 annotated-types==0.7.0
 anyio==4.13.0
+bcrypt==4.2.1
 arxiv==2.4.1
 babel==2.18.0
 certifi==2026.2.25
@@ -28,6 +29,7 @@ openai==2.31.0
 pdfminer.six==20251230
 pdfplumber==0.11.9
 pillow==12.2.0
+PyJWT==2.9.0
 pycparser==3.0
 pydantic==2.12.5
 pydantic_core==2.41.5

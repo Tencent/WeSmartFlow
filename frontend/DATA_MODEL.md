@@ -1,4 +1,4 @@
-# AscendFlow 数据模型
+# WeSmartFlow 数据模型
 
 > 本地个人知识大脑 — 数据结构设计文档
 

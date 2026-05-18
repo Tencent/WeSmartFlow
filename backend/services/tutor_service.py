@@ -11,17 +11,17 @@ TutorService：管理会话生命周期，将 HTTP 请求和 Agent 运行解耦
 
 from __future__ import annotations
 
+import os
 import asyncio
 import json
 import logging
-import sqlite3
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict
 from pathlib import Path
 
-from agents.base_agent import BaseAgent
-from agents.base_context import AgentContextBuilder
+from agents import ChatAgent
+from agent_core.context import SkillPromptContextBuilder
 from agent_core.skills.loader import SkillsLoader
 
 from agents.tools.search_nodes import SearchNodesTool
@@ -52,6 +52,8 @@ from models.session import (
 )
 from repositories import SessionRepository, StudyLogRepository, NodeRepository
 from services.llm_factory import get_llm
+from services.quota import check_and_consume
+from database import get_setting
 
 logger = logging.getLogger(__name__)
 
@@ -69,17 +71,35 @@ def get_current_time() -> str:
 
 
 class TutorService:
-    def __init__(self, db: sqlite3.Connection):
-        self.db = db
-        self.session_repo = SessionRepository(db)
-        self.study_log_repo = StudyLogRepository(db)
-        self.node_repo = NodeRepository(db)
+    def __init__(self):
+        self.session_repo = SessionRepository()
+        self.study_log_repo = StudyLogRepository()
+        self.node_repo = NodeRepository()
+
+    # ── 权属校验 ──────────────────────────────────────
+    def _assert_owner(self, user_id: str, session_id: str) -> SessionSchema | None:
+        """断言会话存在且属于该用户；不存在或不属于该用户都返回 None
+        （上层统一翻译为 404，避免通过状态码区分'不存在 vs 不属于你'）。"""
+        session = self.session_repo.get_by_id(session_id)
+        if not session or session.user_id != user_id:
+            return None
+        return session
 
     def create_session(self, user_id: str, data: SessionCreate) -> SessionSchema:
         return self.session_repo.create(user_id, data)
 
     def get_session(self, session_id: str) -> SessionSchema | None:
         return self.session_repo.get_by_id(session_id)
+
+    def list_sessions(self, user_id: str) -> list[SessionSchema]:
+        """列出用户的所有会话。"""
+        return self.session_repo.get_all(user_id)
+
+    def get_session_detail(self, user_id: str, session_id: str):
+        """获取会话详情（含消息），仅限本人；不存在或不属于该用户都返回 None。"""
+        if not self._assert_owner(user_id, session_id):
+            return None
+        return self.session_repo.get_detail(session_id)
 
     async def stream_chat(
         self,
@@ -98,148 +118,49 @@ class TutorService:
 
         最终回复产出后，本方法会完成持久化（消息、掌握度、学习日志）。
         """
-        session = self.session_repo.get_by_id(session_id)
-        if not session:
-            raise ValueError(f"会话 {session_id} 不存在")
-        # AI课程（completed）允许继续对话（智流Agent），其他已结束会话拒绝
+        session = self._validate_session(user_id, session_id)
         is_immersive = (session.title or "").startswith("[AI课程]")
-        if session.status != "active" and not is_immersive:
-            raise ValueError("会话已结束")
 
         detail = self.session_repo.get_detail(session_id)
         chat_history = detail.messages if detail else []
 
         # 持久化用户消息
-        user_msg = MessageSchema(
-            id=str(uuid.uuid4()),
-            role="user",
-            content=user_message,
-            created_at=datetime.now(timezone.utc),
+        self.session_repo.append_message(
+            session_id,
+            MessageSchema(
+                id=str(uuid.uuid4()),
+                role="user",
+                content=user_message,
+                created_at=datetime.now(timezone.utc),
+            ),
         )
-        self.session_repo.append_message(session_id, user_msg)
+        # 短连接模式下 _execute 已自动 commit，无需手动提交
 
-        mastery_changes: dict[str, float] = {}
-        generated_file_ids: list[str] = []  # 仅路径，写入 MessageArtifacts.files
-        generated_files_meta: list[
-            dict
-        ] = []  # {file_id, title}，写入 SessionSchema.files
-        created_node_ids: list[str] = []
-        created_quiz_ids: list[str] = []
+        # 状态累加器（hook 与 stream 共享）
+        state: Dict[str, Any] = {
+            "mastery_changes": {},
+            "generated_file_ids": [],
+            "generated_files_meta": [],
+            "created_node_ids": [],
+            "created_quiz_ids": [],
+        }
+        event_queue: asyncio.Queue = asyncio.Queue()
 
-        # 用队列桥接同步 hook 和异步生成器
-        # hook 在工具执行完毕后同步触发，把业务事件 put_nowait 进队列
-        # 生成器在每个 Agent 事件之后把队列里积压的事件一并 yield 出去
-        _event_queue: asyncio.Queue = asyncio.Queue()
+        hook = self._make_result_hook(state, event_queue)
+        registry = ToolRegistry(
+            self._build_tools(user_id, session_id, hook, is_immersive)
+        )
+        agent = ChatAgent(
+            llm=get_llm(user_id),
+            context_builder=self._make_context_builder(),
+            tool_registry=registry,
+        )
 
-        def _tool_result_hook(
-            tool_name: str, params: Dict[str, Any], result: Any
-        ) -> None:
-            """统一的工具结果 hook，实时收集各工具产生的副作用并推入事件队列。"""
-            if tool_name == "generate_card":
-                if isinstance(result, str) and not result.startswith("Error"):
-                    generated_file_ids.append(result)
-                    # params 里有 title，一并存下来供后续写 SessionFile 用
-                    generated_files_meta.append(
-                        {
-                            "file_id": result,
-                            "title": params.get("title", ""),
-                        }
-                    )
-                    _event_queue.put_nowait(FileCreatedEvent(file_id=result))
-
-            elif tool_name == "create_node":
-                try:
-                    data = json.loads(result) if isinstance(result, str) else result
-                    if data.get("created"):
-                        created_node_ids.append(data["node_id"])
-                        _event_queue.put_nowait(
-                            NodeCreatedEvent(
-                                node_id=data["node_id"], title=data.get("title", "")
-                            )
-                        )
-                except (json.JSONDecodeError, AttributeError):
-                    pass
-
-            elif tool_name == "create_quiz":
-                try:
-                    data = json.loads(result) if isinstance(result, str) else result
-                    if "quiz_id" in data:
-                        created_quiz_ids.append(data["quiz_id"])
-                except (json.JSONDecodeError, AttributeError):
-                    pass
-
-            elif tool_name == "update_mastery":
-                node_id = params.get("node_id")
-                delta = params.get("delta", 0.0)
-                if node_id and not (
-                    isinstance(result, str) and result.startswith("Error")
-                ):
-                    mastery_changes[node_id] = mastery_changes.get(node_id, 0.0) + delta
-                    _event_queue.put_nowait(
-                        MasteryUpdatedEvent(node_id=node_id, delta=delta)
-                    )
-
-        def _flush_queue():
-            """把队列里所有待发送的业务事件取出，作为列表返回。"""
+        def _flush_queue() -> list:
             events = []
-            while not _event_queue.empty():
-                events.append(_event_queue.get_nowait())
+            while not event_queue.empty():
+                events.append(event_queue.get_nowait())
             return events
-
-        # 判断是否为 AI 主导学习（immersive）的 session
-        is_immersive = (session.title or "").startswith("[AI课程]")
-
-        tools = [
-            get_current_time,
-            SearchNodesTool(self.db, user_id),
-            GetNodeTool(self.db, user_id),
-            SessionCreateNodeTool(
-                self.db, user_id, session_id, on_result_hook=_tool_result_hook
-            ),
-            UpdateNodeTool(self.db, user_id),
-            UpdateMasteryTool(self.db, user_id, on_result_hook=_tool_result_hook),
-            CreateQuizTool(
-                self.db, user_id, session_id, on_result_hook=_tool_result_hook
-            ),
-        ]
-        # AI 主导学习不需要卡片生成（课程 PDF 由 immersive_service 管理）
-        if not is_immersive:
-            tools.append(
-                GenerateCardTool(
-                    db=self.db,
-                    user_id=user_id,
-                    session_id=session_id,
-                    on_result_hook=_tool_result_hook,
-                )
-            )
-        tools.extend(
-            [
-                # 内置网络工具
-                TavilySearch(),
-                ArxivSearch(),
-                WebFetch(),
-                # 文件系统工具（限 skills 目录，供 Agent 动态加载 SKILL.md）
-                ReadFileTool(
-                    allowed_dir=BUILTIN_SKILLS_DIR,
-                    extra_allowed_dirs=[_AGENTS_SKILLS_DIR],
-                ),
-                ListDirTool(
-                    allowed_dir=BUILTIN_SKILLS_DIR,
-                    extra_allowed_dirs=[_AGENTS_SKILLS_DIR],
-                ),
-            ]
-        )
-        registry = ToolRegistry(tools)
-        context_builder = AgentContextBuilder(
-            prompt_file=Path(__file__).parent.parent
-            / "agents"
-            / "prompts"
-            / "tutor.md",
-            skills_loader=SkillsLoader(workspace_skills_dir=_AGENTS_SKILLS_DIR),
-        )
-        agent = BaseAgent(
-            llm=get_llm(), context_builder=context_builder, tool_registry=registry
-        )
 
         final_content = ""
         try:
@@ -270,7 +191,155 @@ class TutorService:
                 finish_reason=AgentFinishReason.ERROR,
             )
 
-        # 持久化 assistant 消息
+        self._persist_assistant_message(
+            session=session,
+            final_content=final_content,
+            state=state,
+            is_immersive=is_immersive,
+        )
+        # 短连接模式下 _execute 已自动 commit，无需手动提交
+
+    # ── stream_chat 的内部辅助方法 ────────────────────────
+
+    def _validate_session(self, user_id: str, session_id: str) -> SessionSchema:
+        """校验会话存在、属于本人、且处于可对话状态，返回 session 对象。"""
+        session = self._assert_owner(user_id, session_id)
+        if not session:
+            raise ValueError(f"会话 {session_id} 不存在")
+        # AI课程（completed）允许继续对话（智流Agent），其他已结束会话拒绝
+        is_immersive = (session.title or "").startswith("[AI课程]")
+        if session.status != "active" and not is_immersive:
+            raise ValueError("会话已结束")
+        return session
+
+    @staticmethod
+    def _make_result_hook(state: Dict[str, Any], event_queue: asyncio.Queue):
+        """构造工具结果 hook：收集副作用并向 event_queue 推入业务事件。"""
+
+        def _hook(tool_name: str, params: Dict[str, Any], result: Any) -> None:
+            if tool_name == "generate_card":
+                if isinstance(result, str) and not result.startswith("Error"):
+                    state["generated_file_ids"].append(result)
+                    state["generated_files_meta"].append(
+                        {"file_id": result, "title": params.get("title", "")}
+                    )
+                    event_queue.put_nowait(FileCreatedEvent(file_id=result))
+
+            elif tool_name == "create_node":
+                try:
+                    data = json.loads(result) if isinstance(result, str) else result
+                    if data.get("created"):
+                        state["created_node_ids"].append(data["node_id"])
+                        event_queue.put_nowait(
+                            NodeCreatedEvent(
+                                node_id=data["node_id"],
+                                title=data.get("title", ""),
+                            )
+                        )
+                except (json.JSONDecodeError, AttributeError):
+                    pass
+
+            elif tool_name == "create_quiz":
+                try:
+                    data = json.loads(result) if isinstance(result, str) else result
+                    if "quiz_id" in data:
+                        state["created_quiz_ids"].append(data["quiz_id"])
+                except (json.JSONDecodeError, AttributeError):
+                    pass
+
+            elif tool_name == "update_mastery":
+                node_id = params.get("node_id")
+                delta = params.get("delta", 0.0)
+                if node_id and not (
+                    isinstance(result, str) and result.startswith("Error")
+                ):
+                    state["mastery_changes"][node_id] = (
+                        state["mastery_changes"].get(node_id, 0.0) + delta
+                    )
+                    event_queue.put_nowait(
+                        MasteryUpdatedEvent(node_id=node_id, delta=delta)
+                    )
+
+        return _hook
+
+    def _build_tools(
+        self,
+        user_id: str,
+        session_id: str,
+        hook,
+        is_immersive: bool,
+    ) -> list:
+        """组装 TutorAgent 可用的工具列表。"""
+        tavily_key = get_setting(user_id, "tavily_api_key") or os.getenv(
+            "TAVILY_API_KEY", ""
+        )
+
+        # 搜索工具额度 hook
+        def _search_hook():
+            check_and_consume(user_id, "search")
+
+        tools = [
+            get_current_time,
+            SearchNodesTool(user_id),
+            GetNodeTool(user_id),
+            SessionCreateNodeTool(user_id, session_id, on_result_hook=hook),
+            UpdateNodeTool(user_id),
+            UpdateMasteryTool(user_id, on_result_hook=hook),
+            CreateQuizTool(user_id, session_id, on_result_hook=hook),
+        ]
+        # AI 主导学习不需要卡片生成（课程 PDF 由 immersive_service 管理）
+        if not is_immersive:
+            tools.append(
+                GenerateCardTool(
+                    user_id=user_id,
+                    session_id=session_id,
+                    on_result_hook=hook,
+                )
+            )
+        tools.extend(
+            [
+                # 内置网络工具（TavilySearch 注入额度 hook）
+                TavilySearch(api_key=tavily_key, before_call_hook=_search_hook),
+                ArxivSearch(),
+                WebFetch(),
+                # 文件系统工具（限 skills 目录，供 Agent 动态加载 SKILL.md）
+                ReadFileTool(
+                    allowed_dir=BUILTIN_SKILLS_DIR,
+                    extra_allowed_dirs=[_AGENTS_SKILLS_DIR],
+                ),
+                ListDirTool(
+                    allowed_dir=BUILTIN_SKILLS_DIR,
+                    extra_allowed_dirs=[_AGENTS_SKILLS_DIR],
+                ),
+            ]
+        )
+        return tools
+
+    @staticmethod
+    def _make_context_builder() -> SkillPromptContextBuilder:
+        """创建 Tutor Agent 的 Context Builder。"""
+        return SkillPromptContextBuilder(
+            prompt_file=Path(__file__).parent.parent
+            / "agents"
+            / "prompts"
+            / "tutor.md",
+            skills_loader=SkillsLoader(workspace_skills_dir=_AGENTS_SKILLS_DIR),
+        )
+
+    def _persist_assistant_message(
+        self,
+        session: SessionSchema,
+        final_content: str,
+        state: Dict[str, Any],
+        is_immersive: bool,
+    ) -> None:
+        """持久化 assistant 消息、会话节点列表、会话文件列表。"""
+        mastery_changes: dict[str, float] = state["mastery_changes"]
+        generated_file_ids: list[str] = state["generated_file_ids"]
+        generated_files_meta: list[dict] = state["generated_files_meta"]
+        created_node_ids: list[str] = state["created_node_ids"]
+        created_quiz_ids: list[str] = state["created_quiz_ids"]
+
         # new_nodes：本轮新建的节点；node_refs：掌握度有变化的已有节点（排除新建的）
         new_nodes = created_node_ids
         node_refs = list(set(mastery_changes.keys()) - set(created_node_ids))
@@ -291,21 +360,19 @@ class TutorService:
                 quiz_ids=created_quiz_ids,
             ),
         )
-        self.session_repo.append_message(session_id, assistant_msg)
+        self.session_repo.append_message(session.id, assistant_msg)
 
         # 更新会话涉及的节点列表
         if all_node_ids:
-            existing = session.node_ids_covered
-            merged = list(set(existing + all_node_ids))
-            self.session_repo.update_nodes_covered(session_id, merged)
+            merged = list(set((session.node_ids_covered or []) + all_node_ids))
+            self.session_repo.update_nodes_covered(session.id, merged)
 
-        # 将本轮生成的文件追加到 SessionSchema.files，供再次打开会话时渲染
+        # 将本轮生成的文件追加到 SessionSchema.files
         # 注意：AI 主导学习（immersive）的 session files 是课程章节 PDF，不应追加卡片
-        is_immersive = (session.title or "").startswith("[AI课程]")
         if not is_immersive:
             for meta in generated_files_meta:
                 self.session_repo.append_session_file(
-                    session_id,
+                    session.id,
                     SessionFile(
                         file_id=meta["file_id"],
                         title=meta["title"],
@@ -317,7 +384,7 @@ class TutorService:
 
     def record_duration(self, user_id: str, session_id: str, minutes: int) -> None:
         """前端离开会话页面时调用，记录本次会话的学习时长"""
-        session = self.session_repo.get_by_id(session_id)
+        session = self._assert_owner(user_id, session_id)
         if not session:
             raise ValueError(f"会话 {session_id} 不存在")
         minutes = max(1, minutes)

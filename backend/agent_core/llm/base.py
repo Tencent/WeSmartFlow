@@ -10,7 +10,10 @@ import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Union
+
+# before_call hook 签名：() -> None 或 Awaitable[None]
+BeforeCallHook = Callable[[], Union[None, Awaitable[None]]]
 
 
 class MessageRole(Enum):
@@ -70,9 +73,33 @@ class LLMResponse:
 class BaseLLM(ABC):
     """LLM 抽象基类。"""
 
-    def __init__(self, model_name: str, **kwargs: Any):
+    def __init__(
+        self, model_name: str, before_call: BeforeCallHook | None = None, **kwargs: Any
+    ):
         self.model_name = model_name
+        self._before_call = before_call
         self.default_config: Dict[str, Any] = kwargs
+
+    def _fire_before_call(self) -> None:
+        """同步触发 before_call hook（额度检查等）。"""
+        if self._before_call is not None:
+            ret = self._before_call()
+            if asyncio.iscoroutine(ret):
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        loop.create_task(ret)
+                    else:
+                        loop.run_until_complete(ret)
+                except RuntimeError:
+                    asyncio.run(ret)
+
+    async def _async_fire_before_call(self) -> None:
+        """异步触发 before_call hook。"""
+        if self._before_call is not None:
+            ret = self._before_call()
+            if asyncio.iscoroutine(ret):
+                await ret
 
     @abstractmethod
     def think(

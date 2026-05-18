@@ -98,6 +98,7 @@ class OpenAILLM(BaseLLM):
         max_retries: Optional[int] = None,
         retry_base_delay: Optional[float] = None,
         retry_max_delay: Optional[float] = None,
+        before_call=None,
         **kwargs: Any,
     ):
         model_name = model_name or os.getenv("LLM_MODEL", "gpt-4o")
@@ -128,7 +129,7 @@ class OpenAILLM(BaseLLM):
         if not api_key:
             raise ValueError("api_key 必须被提供或通过环境变量 LLM_API_KEY 定义。")
 
-        super().__init__(model_name, **kwargs)
+        super().__init__(model_name, before_call=before_call, **kwargs)
 
         self.api_key = api_key
         self.base_url = base_url
@@ -228,6 +229,7 @@ class OpenAILLM(BaseLLM):
         config: Optional[Dict[str, Any]] = None,
     ) -> LLMResponse:
         """同步调用标准 OpenAI API。"""
+        self._fire_before_call()
         merged_config = {**self.default_config, **(config or {})}
         kw = self._build_kwargs(messages, tools, tool_choice, merged_config)
         total_attempts = self.max_retries + 1
@@ -269,6 +271,7 @@ class OpenAILLM(BaseLLM):
         """异步调用标准 OpenAI API。"""
         import asyncio
 
+        await self._async_fire_before_call()
         merged_config = {**self.default_config, **(config or {})}
         kw = self._build_kwargs(messages, tools, tool_choice, merged_config)
         total_attempts = self.max_retries + 1
@@ -307,12 +310,9 @@ class OpenAILLM(BaseLLM):
 if __name__ == "__main__":
     import asyncio
 
-    try:
-        from dotenv import load_dotenv
+    from dotenv import load_dotenv
 
-        load_dotenv()
-    except ImportError:
-        pass
+    load_dotenv()
 
     # ── 测试1：同步调用（无工具）──────────────────────────────────
     def test_sync():

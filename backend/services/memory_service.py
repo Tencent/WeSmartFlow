@@ -18,7 +18,6 @@ SM-2 算法简述：
 
 from __future__ import annotations
 
-import sqlite3
 from datetime import datetime, timedelta, timezone
 
 from repositories import NodeRepository
@@ -57,18 +56,24 @@ def quality_to_mastery_delta(quality: int) -> float:
 
 
 class MemoryService:
-    def __init__(self, db: sqlite3.Connection):
-        self.node_repo = NodeRepository(db)
+    def __init__(self):
+        self.node_repo = NodeRepository()
 
-    def review_node(self, node_id: str, quality: int) -> dict:
-        """
-        用户复习某节点后调用，返回更新后的记忆状态。
-        quality: 0~5
-        """
+    # ── 权属校验 ──────────────────────────────────────
+    def _assert_owner(self, user_id: str, node_id: str):
+        """断言节点存在且属于该用户；不存在或不属于该用户都抛 ValueError
+        （上层统一翻译为 404，避免通过状态码区分'不存在 vs 不属于你'）。"""
         node = self.node_repo.get_by_id(node_id)
-        if not node:
+        if not node or node.user_id != user_id:
             raise ValueError(f"节点 {node_id} 不存在")
+        return node
 
+    def review_node_for_user(self, user_id: str, node_id: str, quality: int) -> dict:
+        """带权属校验的复习接口（供 router 直接调用）。"""
+        node = self._assert_owner(user_id, node_id)
+        return self._do_review(node, quality)
+
+    def _do_review(self, node, quality: int) -> dict:
         m = node.memory
         new_ef, new_interval, new_reps = sm2(
             quality, m.ease_factor, m.interval, m.repetitions
@@ -86,7 +91,7 @@ class MemoryService:
         new_mastery = max(0.0, min(1.0, m.mastery_level + delta))
 
         self.node_repo.update_memory(
-            node_id=node_id,
+            node_id=node.id,
             ease_factor=new_ef,
             interval=new_interval,
             repetitions=new_reps,
@@ -95,7 +100,7 @@ class MemoryService:
         )
 
         return {
-            "node_id": node_id,
+            "node_id": node.id,
             "ease_factor": new_ef,
             "interval": new_interval,
             "repetitions": new_reps,

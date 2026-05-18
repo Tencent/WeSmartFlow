@@ -11,11 +11,9 @@ from __future__ import annotations
 
 import json
 import logging
-import sqlite3
 from datetime import datetime, timezone
 
-from repositories.base import new_id, utcnow_str
-from repositories import NodeRepository, SessionRepository
+from repositories import NodeRepository, SessionRepository, DailyPlanRepository
 from services.llm_factory import get_llm
 
 logger = logging.getLogger(__name__)
@@ -71,11 +69,10 @@ _PLAN_PROMPT = """你是一个 AI 学习助理，请根据用户的知识图谱�
 
 
 class DailyPlanService:
-    def __init__(self, db: sqlite3.Connection):
-        self.db = db
-        self.node_repo = NodeRepository(db)
-        self.session_repo = SessionRepository(db)
-        self.llm = get_llm()
+    def __init__(self):
+        self.node_repo = NodeRepository()
+        self.session_repo = SessionRepository()
+        self.plan_repo = DailyPlanRepository()
 
     async def get_or_generate(self, user_id: str) -> dict:
         """
@@ -85,15 +82,9 @@ class DailyPlanService:
         today = datetime.now(timezone.utc).date().isoformat()
 
         # 1. 查缓存
-        row = self.db.execute(
-            "SELECT tasks, recommendation FROM daily_plans WHERE user_id=? AND date=?",
-            (user_id, today),
-        ).fetchone()
-        if row:
-            return {
-                "tasks": json.loads(row["tasks"]),
-                "recommendation": json.loads(row["recommendation"]),
-            }
+        cached = self.plan_repo.get_by_date(user_id, today)
+        if cached is not None:
+            return cached
 
         # 2. 生成
         try:
@@ -106,21 +97,7 @@ class DailyPlanService:
         if not plan.get("tasks") and not plan.get("recommendation"):
             return plan
         try:
-            self.db.execute(
-                """
-                INSERT OR REPLACE INTO daily_plans (id, user_id, date, tasks, recommendation, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    new_id(),
-                    user_id,
-                    today,
-                    json.dumps(plan["tasks"], ensure_ascii=False),
-                    json.dumps(plan["recommendation"], ensure_ascii=False),
-                    utcnow_str(),
-                ),
-            )
-            self.db.commit()
+            self.plan_repo.upsert(user_id, today, plan["tasks"], plan["recommendation"])
         except Exception:  # pylint: disable=broad-except
             logger.exception("DailyPlanService 缓存写入失败")
 
@@ -164,7 +141,7 @@ class DailyPlanService:
             recent_sessions_text=sessions_text,
         )
 
-        response = await self.llm.async_think(
+        response = await get_llm(user_id).async_think(
             messages=[
                 {"role": "system", "content": "你是学习助理，只输出 JSON。"},
                 {"role": "user", "content": prompt},

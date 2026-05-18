@@ -3,15 +3,12 @@ create_quiz：Agent 已出好题目后，将题目存入数据库
 """
 
 from __future__ import annotations
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import json
-import sqlite3
+
 from agent_core.tool.base import BaseTool
 from repositories.base import new_id, utcnow_str
+from database import get_db
 
 
 class CreateQuizTool(BaseTool):
@@ -54,11 +51,8 @@ class CreateQuizTool(BaseTool):
         ],
     }
 
-    def __init__(
-        self, db: sqlite3.Connection, user_id: str, session_id: str, on_result_hook=None
-    ):
+    def __init__(self, user_id: str, session_id: str, on_result_hook=None):
         super().__init__(on_result_hook=on_result_hook)
-        self._db = db
         self._user_id = user_id
         self._session_id = session_id
 
@@ -74,27 +68,27 @@ class CreateQuizTool(BaseTool):
         quiz_id = new_id()
         now = utcnow_str()
 
-        self._db.execute(
-            """
-            INSERT INTO quizzes
-              (id, user_id, node_id, session_id, quiz_type, question, options,
-               correct_answer, explanation, created_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?)
-            """,
-            (
-                quiz_id,
-                self._user_id,
-                node_id,
-                self._session_id,
-                quiz_type,
-                question,
-                json.dumps(options, ensure_ascii=False) if options else None,
-                correct_answer,
-                explanation,
-                now,
-            ),
-        )
-        self._db.commit()
+        with get_db() as conn:
+            conn.execute(
+                """
+                INSERT INTO quizzes
+                  (id, user_id, node_id, session_id, quiz_type, question, options,
+                   correct_answer, explanation, created_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    quiz_id,
+                    self._user_id,
+                    node_id,
+                    self._session_id,
+                    quiz_type,
+                    question,
+                    json.dumps(options, ensure_ascii=False) if options else None,
+                    correct_answer,
+                    explanation,
+                    now,
+                ),
+            )
 
         result = {
             "quiz_id": quiz_id,

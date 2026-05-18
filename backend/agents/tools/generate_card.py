@@ -6,11 +6,12 @@ Tutor Agent 只需描述"想展示什么内容"，CardWriterAgent 负责：
   2. 调用 latex_pdf_compile 编译 PDF
   3. 编译失败时自动修复重试
 
-生成的 PDF 保存至 generated_cards/{uuid}.pdf，成功时返回相对于 CARDS_DIR 的相对路径。
+生成的 PDF 保存至 documents/cards/{card_id}/card.pdf，成功时返回相对于 CARDS_DIR 的相对路径。
 """
 
 from __future__ import annotations
 
+import os
 import shutil
 import tempfile
 import uuid
@@ -23,8 +24,10 @@ from agent_core.tool.filesystem import WriteFileTool
 from agent_core.tool.openai_image_gen import OpenAIImageGenTool
 from agent_core.tool.pdf_compile import LatexPdfCompileTool
 from agent_core.tool.registry import ToolRegistry
-from config import CARDS_DIR
+from config import CARDS_DIR, TEX_TEMPLATE_DIR
 from services.llm_factory import get_llm
+from services.quota import check_and_consume
+from repositories.document_repo import DocumentRepository
 
 
 # CardWriterAgent 的 system prompt
@@ -93,45 +96,52 @@ array, enumitem
 """
 
 
-def _build_image_tool() -> OpenAIImageGenTool:
-    """从 settings 表读取图像生成配置，构建 OpenAIImageGenTool 实例。
+def _build_image_tool(user_id, before_call_hook=None):
+    """构建 OpenAI 兼容图像生成工具实例。"""
+    import logging
+    import os
 
-    如果配置读取失败，仍返回一个可用的实例（使用默认值），
-    确保不会因为图片生成配置问题而阻断卡片生成流程。
-    """
+    _logger = logging.getLogger(__name__)
+
     try:
         from database import get_setting
-        import os
 
-        api_key = get_setting("img_api_key") or os.getenv("IMG_API_KEY", "any")
-        base_url = get_setting("img_base_url") or os.getenv(
+        api_key = get_setting(user_id, "img_api_key") or os.getenv("IMG_API_KEY", "any")
+        base_url = get_setting(user_id, "img_base_url") or os.getenv(
             "IMG_BASE_URL", "http://localhost:8080/v1"
         )
-        model = get_setting("img_model") or os.getenv("IMG_MODEL") or None
+        model = get_setting(user_id, "img_model") or os.getenv("IMG_MODEL") or None
     except Exception as e:  # pylint: disable=broad-except
-        import logging
-        import os
-
-        logging.getLogger(__name__).warning(
+        _logger.warning(
             "图片生成配置读取失败（将使用默认值，图片功能可能不可用）: %s", e
         )
         api_key = os.getenv("IMG_API_KEY", "any")
         base_url = os.getenv("IMG_BASE_URL", "http://localhost:8080/v1")
         model = os.getenv("IMG_MODEL") or None
-    return OpenAIImageGenTool(api_key=api_key, base_url=base_url, model=model)
+    return OpenAIImageGenTool(
+        api_key=api_key,
+        base_url=base_url,
+        model=model,
+        before_call_hook=before_call_hook,
+    )
 
 
-def _build_card_writer_agent(work_dir: Path) -> ReActAgent:
+def _build_card_writer_agent(work_dir: Path, user_id) -> ReActAgent:
     """创建 CardWriterAgent，工作目录限定在 work_dir 下，支持插图生成。"""
+
+    # 图像生成工具额度 hook
+    def _image_hook():
+        check_and_consume(user_id, "image")
+
     tools = ToolRegistry(
         [
             WriteFileTool(workspace=work_dir, allowed_dir=work_dir),
-            _build_image_tool(),
-            LatexPdfCompileTool(),
+            _build_image_tool(user_id, before_call_hook=_image_hook),
+            LatexPdfCompileTool(TEX_TEMPLATE_DIR),
         ]
     )
     return ReActAgent(
-        llm=get_llm(),
+        llm=get_llm(user_id),
         context_builder=SimpleContextBuilder(_CARD_WRITER_SYSTEM_PROMPT),
         tool_registry=tools,
         max_steps=15,
@@ -144,7 +154,7 @@ class GenerateCardTool(BaseTool):
     委派 CardWriterAgent 生成 PDF 知识卡片（Beamer + SimplePlus 主题）。
 
     Tutor Agent 描述想展示的内容，CardWriterAgent 负责编写 tex、编译 PDF。
-    成功时返回相对于 CARDS_DIR 的相对路径（如 {uuid}.pdf），失败时返回 Error: 开头的错误信息。
+    成功时返回相对于 CARDS_DIR 的相对路径（如 {card_id}/card.pdf），失败时返回 Error: 开头的错误信息。
     """
 
     name = "generate_card"
@@ -152,7 +162,7 @@ class GenerateCardTool(BaseTool):
         "委派专门的卡片生成 Agent 制作一张轻量 PDF 知识卡片（Beamer 风格，支持插图）。"
         "每次只生成 1-3 页内容，适合聚焦单个知识点、对比或步骤。"
         "描述你想展示的内容即可，卡片的排版、插图和编译由子 Agent 负责。"
-        "成功时返回相对路径（如 {uuid}.pdf），失败时返回 Error: 开头的错误信息。"
+        "成功时返回相对路径（如 {card_id}/card.pdf），失败时返回 Error: 开头的错误信息。"
     )
     parameters = {
         "type": "object",
@@ -182,9 +192,8 @@ class GenerateCardTool(BaseTool):
         "required": ["title", "content_description"],
     }
 
-    def __init__(self, db=None, user_id=None, session_id=None, on_result_hook=None):
+    def __init__(self, user_id=None, session_id=None, on_result_hook=None):
         super().__init__(on_result_hook=on_result_hook)
-        self.db = db
         self.user_id = user_id
         self.session_id = session_id
 
@@ -223,37 +232,45 @@ class GenerateCardTool(BaseTool):
     ):
         """创建文档记录并建立与节点的关联"""
         try:
-            from repositories.document_repo import DocumentRepository
-            import os
-            from config import CARDS_DIR
+            doc_repo = DocumentRepository()
 
-            if not self.db:
-                print("警告：数据库连接未设置，跳过文档记录创建")
-                return
-
-            doc_repo = DocumentRepository(self.db)
-
-            # 获取实际文件大小
-            pdf_path = CARDS_DIR / file_name
+            # 卡片目录: documents/cards/{card_id}/
+            card_dir = CARDS_DIR / card_id
+            pdf_path = card_dir / "card.pdf"
             file_size = os.path.getsize(pdf_path) if pdf_path.exists() else 0
 
+            # storage_key: 相对于 DATA_DIR 的路径
+            storage_key = f"documents/cards/{card_id}/card.pdf"
+
             # 创建文档记录
+            if not self.user_id:
+                raise ValueError("GenerateCardTool 缺少 user_id，拒绝写入脏数据")
             doc = doc_repo.create_generated(
                 doc_id=card_id,
-                user_id=self.user_id or "default",
+                user_id=self.user_id,
                 title=title,
                 file_name=file_name,
+                storage_key=storage_key,
                 file_type="pdf",
                 file_size=file_size,
                 generation_prompt=content_description,
-                generation_context=f"由TutorAgent在会话{self.session_id}中生成"
-                if self.session_id
-                else "由GenerateCardTool生成",
                 session_id=self.session_id,
                 node_ids=node_ids or [],
             )
 
             print(f"卡片文档记录创建成功: {doc.id}")
+
+            # 回填 total_pages（从 tex 源码数 \begin{frame}）
+            try:
+                tex_path = card_dir / "card.tex"
+                if tex_path.exists():
+                    num_frames = tex_path.read_text(encoding="utf-8").count(
+                        r"\begin{frame}"
+                    )
+                    if num_frames > 0:
+                        doc_repo.set_pages(card_id, num_frames)
+            except Exception as e:  # pylint: disable=broad-except
+                print(f"回填卡片页数失败（忽略）: {e}")
 
         except Exception as e:  # pylint: disable=broad-except
             print(f"创建卡片文档记录失败: {e}")
@@ -270,6 +287,10 @@ class GenerateCardTool(BaseTool):
             tmp_tex = work_dir / "card.tex"
             tmp_pdf = work_dir / "card.pdf"
 
+            # 卡片最终目录: documents/cards/{card_id}/
+            card_dir = CARDS_DIR / card_id
+            card_dir.mkdir(parents=True, exist_ok=True)
+
             # 组装给 subagent 的指令，限定其在 work_dir 下工作
             instruction = (
                 f"请生成一张标题为「{title}」的 PDF 知识卡片。\n\n"
@@ -283,20 +304,29 @@ class GenerateCardTool(BaseTool):
             )
 
             # 调用 CardWriterAgent（同步），工作目录限定
-            agent = _build_card_writer_agent(work_dir)
+            agent = _build_card_writer_agent(
+                work_dir, user_id=self.user_id or "default"
+            )
             result = agent.run(instruction)
             output = result.output or ""
 
             if not tmp_pdf.exists():
                 return f"Error: 卡片生成失败 — {output}"
 
-            # 由代码硬性将产物移动到最终位置，命名为 {uuid}.tex / {uuid}.pdf
-            final_tex = CARDS_DIR / f"{card_id}.tex"
-            final_pdf = CARDS_DIR / f"{card_id}.pdf"
+            # 由代码硬性将产物移动到最终位置
+            final_tex = card_dir / "card.tex"
+            final_pdf = card_dir / "card.pdf"
             if tmp_tex.exists():
                 shutil.move(str(tmp_tex), str(final_tex))
 
             shutil.move(str(tmp_pdf), str(final_pdf))
+
+            # 将工作目录中的图片也移动到卡片目录
+            img_extensions = {".png", ".jpg", ".jpeg", ".webp"}
+            for img_file in work_dir.iterdir():
+                if img_file.suffix.lower() in img_extensions:
+                    dst_img = card_dir / img_file.name
+                    shutil.move(str(img_file), str(dst_img))
 
             # ── TTS 语音讲解生成 ──────────────────────────────────
             try:
@@ -308,7 +338,11 @@ class GenerateCardTool(BaseTool):
 
             # ── 资产归档到 data/assets/ ──────────────────────────
             try:
-                from services.asset_service import archive_pdf, archive_audio
+                from services.asset_service import (
+                    archive_pdf,
+                    archive_audio,
+                    archive_image,
+                )
 
                 # 归档 PDF
                 archive_pdf(
@@ -317,10 +351,31 @@ class GenerateCardTool(BaseTool):
                     source_type="card",
                     session_id=self.session_id or "",
                 )
+                # 归档图片
+                for img in card_dir.iterdir():
+                    if img.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}:
+                        prompt = ""
+                        meta_file = card_dir / f"{img.stem}.meta.json"
+                        if meta_file.exists():
+                            import json as _json2
+
+                            try:
+                                _meta = _json2.loads(
+                                    meta_file.read_text(encoding="utf-8")
+                                )
+                                prompt = _meta.get("prompt", "")
+                            except Exception:  # pylint: disable=broad-except
+                                pass
+                        archive_image(
+                            img,
+                            prompt=prompt,
+                            source_type="card",
+                            chapter=card_id,
+                        )
                 # 归档 TTS 音频
-                audio_dir = CARDS_DIR / f"{card_id}_audio"
+                audio_dir = card_dir / "audio"
                 if audio_dir.exists():
-                    notes_path = CARDS_DIR / f"{card_id}_notes.json"
+                    notes_path = card_dir / "notes.json"
                     notes = []
                     if notes_path.exists():
                         import json as _json
@@ -329,16 +384,21 @@ class GenerateCardTool(BaseTool):
                             notes = _json.loads(notes_path.read_text(encoding="utf-8"))
                         except Exception:  # pylint: disable=broad-except
                             pass
-                    for wav in sorted(audio_dir.glob("*.wav")):
+                    audio_extensions = {".wav", ".mp3"}
+                    for audio_file in sorted(
+                        f
+                        for f in audio_dir.iterdir()
+                        if f.suffix.lower() in audio_extensions
+                    ):
                         import re as _re
 
-                        m = _re.match(r"frame_(\d+)", wav.stem)
+                        m = _re.match(r"frame_(\d+)", audio_file.stem)
                         frame_idx = int(m.group(1)) if m else 0
                         text = (
                             notes[frame_idx - 1] if 0 < frame_idx <= len(notes) else ""
                         )
                         archive_audio(
-                            wav,
+                            audio_file,
                             text=text,
                             source_type="card",
                             chapter=card_id,
@@ -354,7 +414,7 @@ class GenerateCardTool(BaseTool):
                     "卡片 %s 资产归档失败: %s", card_id, arch_err
                 )
 
-            return str(f"{card_id}.pdf")  # 直接返回这个
+            return f"{card_id}/card.pdf"  # 返回相对于 CARDS_DIR 的路径
 
         except Exception as e:  # pylint: disable=broad-except
             return f"Error: 生成卡片失败 — {e}"
@@ -379,7 +439,7 @@ class GenerateCardTool(BaseTool):
             return
 
         # 用 LLM 生成讲解稿
-        llm = get_llm()
+        llm = get_llm(self.user_id)
         prompt = (
             f"以下是一份 LaTeX Beamer 知识卡片，共 {num_frames} 页。\n\n"
             f"请以老师的身份，为每一页写一段**简短的讲解旁白**（30-80字/页）。\n"
@@ -406,7 +466,7 @@ class GenerateCardTool(BaseTool):
             return
 
         # TTS 合成
-        audio_dir = CARDS_DIR / f"{card_id}_audio"
+        audio_dir = CARDS_DIR / card_id / "audio"
         audio_dir.mkdir(parents=True, exist_ok=True)
 
         items = [
@@ -418,7 +478,7 @@ class GenerateCardTool(BaseTool):
         )
 
         # 保存讲解稿
-        notes_path = CARDS_DIR / f"{card_id}_notes.json"
+        notes_path = CARDS_DIR / card_id / "notes.json"
         notes_path.write_text(
             json.dumps(notes, ensure_ascii=False, indent=2), encoding="utf-8"
         )

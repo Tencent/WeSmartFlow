@@ -704,6 +704,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from "vue";
+import { userApi, briefApi } from "@/api";
 
 // ── 日期工具 ────────────────────────────────────────────────────
 function getTodayStr() {
@@ -821,8 +822,7 @@ const streakDays = computed(() => {
 
 async function loadBriefDates() {
   try {
-    const res = await fetch("/api/brief/dates");
-    const data = await res.json();
+    const data = await briefApi.getDates();
     dateDots.value = new Set([todayStr, ...(data.dates || [])]);
   } catch (e) {
     console.error("加载简报日期失败", e);
@@ -839,8 +839,7 @@ const newTagInput = ref("");
 
 async function loadInterests() {
   try {
-    const res = await fetch("/api/user");
-    const user = await res.json();
+    const user = await userApi.getMe();
     interests.value = user.preferences?.interests || [];
   } catch (e) {
     console.error("加载兴趣失败", e);
@@ -867,12 +866,8 @@ function removeTag(tag) {
 
 async function saveInterests() {
   try {
-    await fetch("/api/user", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        preferences: { interests: editingInterests.value },
-      }),
+    await userApi.updateMe({
+      preferences: { interests: editingInterests.value },
     });
     interests.value = [...editingInterests.value];
     showInterestEditor.value = false;
@@ -912,15 +907,14 @@ async function loadBriefForDate(date) {
 
   isLoading.value = true;
   try {
-    let res;
+    let data;
     if (date === todayStr) {
       // 今天：有缓存直接返回，否则生成
-      res = await fetch("/api/brief");
+      data = await briefApi.getToday();
     } else {
       // 历史日期：仅读缓存
-      res = await fetch(`/api/brief/${date}`);
+      data = await briefApi.getByDate(date);
     }
-    const data = await res.json();
     briefCache.value = {
       ...briefCache.value,
       [date]: data.has_data ? data : null,
@@ -948,8 +942,7 @@ async function refreshData() {
 async function regenerate() {
   isGenerating.value = true;
   try {
-    const res = await fetch("/api/brief/regenerate", { method: "POST" });
-    const data = await res.json();
+    const data = await briefApi.regenerate();
     briefCache.value = {
       ...briefCache.value,
       [todayStr]: data.has_data ? data : null,

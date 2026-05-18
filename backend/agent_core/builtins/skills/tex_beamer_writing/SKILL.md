@@ -42,7 +42,7 @@ always: false
 
 \title{章节标题}
 \subtitle{课程主题}
-\author{AscendFlow 智流}
+\author{WeSmartFlow 智流}
 \date{\today}
 
 \begin{document}

@@ -228,3 +228,7 @@ core/tools/test_results/
 test_dir/.DS_Store
 
 .vscode/
+
+*.DS_Store
+
+*SimplePlus-BeamerTheme/

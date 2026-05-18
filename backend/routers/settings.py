@@ -1,18 +1,21 @@
 """
 系统设置路由
 GET  /api/settings               → 返回所有配置项（敏感字段脱敏）
+GET  /api/settings/quota         → 查询用户剩余免费次数
 POST /api/settings               → 批量保存配置项
 POST /api/settings/test          → 测试当前 LLM 配置是否可用
 POST /api/settings/test-tavily   → 测试 Tavily API Key 是否可用
-POST /api/settings/validate-path → 校验路径是否合法可写
+POST /api/settings/test-image    → 测试图像生成 API 是否可用
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from database import get_all_settings, set_settings_batch
+from dependencies import get_current_user
+from services.quota import check_and_consume, get_usage
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -37,38 +40,59 @@ class SettingsSaveRequest(BaseModel):
     img_model: str | None = None
 
 
+@router.get("/quota")
+def get_quota(user_id: str = Depends(get_current_user)):
+    """查询当前用户各类别的剩余免费次数。
+
+    返回示例:
+    {
+        "llm":    {"used": 5, "limit": 400, "remaining": 395, "is_platform": true},
+        "search": {"used": 2, "limit": 50,  "remaining": 48,  "is_platform": true},
+        "image":  {"used": 0, "limit": -1,  "remaining": -1,  "is_platform": false}
+    }
+    其中 limit=-1 / remaining=-1 表示用户使用自己的 Key，不限次数。
+    """
+    usage = get_usage(user_id)
+    result = {}
+    for cat, info in usage.items():
+        limit = info["limit"]
+        used = info["used"]
+        remaining = max(limit - used, 0) if limit >= 0 else -1
+        result[cat] = {
+            "used": used,
+            "limit": limit,
+            "remaining": remaining,
+            "is_platform": info["is_platform"],
+        }
+    return result
+
+
 @router.get("")
-def get_settings():
-    """返回所有配置项，敏感字段脱敏。"""
-    raw = get_all_settings()
+def get_settings(user_id: str = Depends(get_current_user)):
+    """返回当前用户的所有配置项，敏感字段脱敏。"""
+    raw = get_all_settings(user_id)
     return {k: _mask(k, v) for k, v in raw.items()}
 
 
-@router.get("/raw")
-def get_settings_raw():
-    """返回所有配置项原始值（仅供后端内部调试，生产环境应鉴权）。"""
-    return get_all_settings()
-
-
 @router.post("")
-def save_settings(body: SettingsSaveRequest):
-    """批量保存配置项，None 字段跳过（不覆盖）。"""
+def save_settings(body: SettingsSaveRequest, user_id: str = Depends(get_current_user)):
+    """批量保存当前用户的配置项，None 字段跳过（不覆盖）。"""
     updates: dict[str, str] = {}
     for key, value in body.model_dump().items():
         if value is not None:
             updates[key] = value
     if updates:
-        set_settings_batch(updates)
+        set_settings_batch(user_id, updates)
     return {"ok": True, "updated": list(updates.keys())}
 
 
 @router.post("/test")
-def test_llm():
+def test_llm(user_id: str = Depends(get_current_user)):
     """测试当前 LLM 配置是否可用（发送一条最小请求）。"""
     try:
         from services.llm_factory import get_llm
 
-        llm = get_llm()
+        llm = get_llm(user_id)
         resp = llm.think(
             [{"role": "user", "content": "reply with the single word: ok"}],
             config={"max_tokens": 10},
@@ -87,38 +111,104 @@ def test_llm():
 
 
 @router.post("/test-image")
-def test_image_gen():
-    """测试图像生成 API 是否可用（请求 /health 端点）。"""
+def test_image_gen(user_id: str = Depends(get_current_user)):
+    """测试图像生成 API 是否可用（真正生成一张图片并返回 base64 供前端展示）。"""
     try:
-        from database import get_setting
+        import base64
 
-        base_url = get_setting("img_base_url") or ""
+        # 额度检查
+        check_and_consume(user_id, "image")
+
+        from database import get_setting
+        import os
+
+        base_url = get_setting(user_id, "img_base_url") or os.getenv("IMG_BASE_URL", "")
+        api_key = get_setting(user_id, "img_api_key") or os.getenv("IMG_API_KEY", "")
+        model = get_setting(user_id, "img_model") or os.getenv("IMG_MODEL", "")
         if not base_url:
             return {"ok": False, "error": "未配置图像生成 Base URL"}
+        if not api_key:
+            return {"ok": False, "error": "未配置图像生成 API Key"}
+
         try:
             import requests as _requests
         except ImportError:
             return {"ok": False, "error": "requests 库未安装"}
-        # 去掉末尾的 /v1 等路径，取服务根地址
-        import re
 
-        root_url = re.sub(r"/v\d+/?$", "", base_url.rstrip("/"))
-        resp = _requests.get(f"{root_url}/health", timeout=10)
-        if resp.status_code == 200:
-            return {"ok": True, "reply": "连接成功，图像生成服务可用"}
+        # 构造最小请求体，生成一张小尺寸测试图片
+        payload = {
+            "prompt": "A beautiful sunset over a calm ocean",
+            "size": "512x512",
+            "response_format": "b64_json",
+            "n": 1,
+        }
+        if model:
+            payload["model"] = model
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+
+        resp = _requests.post(
+            f"{base_url.rstrip('/')}/images/generations",
+            json=payload,
+            headers=headers,
+            timeout=120,
+        )
+
+        if resp.status_code != 200:
+            try:
+                detail = resp.json().get("error", {}).get("message", resp.text[:300])
+            except Exception:
+                detail = resp.text[:300]
+            return {"ok": False, "error": f"HTTP {resp.status_code}: {detail}"}
+
+        resp_json = resp.json()
+        data_list = resp_json.get("data") or []
+        if not data_list:
+            return {"ok": False, "error": "接口未返回图像数据"}
+
+        item = data_list[0]
+        b64_data = item.get("b64_json")
+        url = item.get("url")
+
+        # 优先使用 b64_json，否则下载 url 再转 base64
+        if b64_data:
+            image_b64 = b64_data
+        elif url:
+            try:
+                img_resp = _requests.get(url, timeout=60)
+                img_resp.raise_for_status()
+                image_b64 = base64.b64encode(img_resp.content).decode("utf-8")
+            except Exception as dl_err:
+                return {"ok": False, "error": f"图片下载失败: {dl_err}"}
         else:
-            return {"ok": False, "error": f"HTTP {resp.status_code}: {resp.text[:200]}"}
+            return {"ok": False, "error": "接口返回数据中无 b64_json 或 url 字段"}
+
+        return {
+            "ok": True,
+            "reply": "图像生成成功，API 配置正确",
+            "image": f"data:image/png;base64,{image_b64}",
+        }
+
     except Exception as e:  # pylint: disable=broad-except
         return {"ok": False, "error": str(e)}
 
 
 @router.post("/test-tavily")
-def test_tavily():
+def test_tavily(user_id: str = Depends(get_current_user)):
     """测试 Tavily API Key 是否可用（发送一条最小搜索请求）。"""
     try:
-        from database import get_setting
+        # 额度检查
+        check_and_consume(user_id, "search")
 
-        api_key = get_setting("tavily_api_key") or ""
+        from database import get_setting
+        import os
+
+        api_key = get_setting(user_id, "tavily_api_key") or os.getenv(
+            "TAVILY_API_KEY", ""
+        )
         if not api_key:
             return {"ok": False, "error": "未配置 Tavily API Key"}
         from tavily import TavilyClient

@@ -452,7 +452,7 @@ async function loadDashboard() {
   try {
     const [data, userInfo] = await Promise.all([
       userApi.getDashboard(),
-      fetch("/api/user").then((r) => r.json()),
+      userApi.getMe(),
     ]);
     userName.value = userInfo.name || "User";
     stats.value = data;

@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 from typing import Optional
 from models.user import UserSchema, UserPreferences, UserAbout
-from .base import BaseRepository, utcnow_str
+from .base import BaseRepository
 
 
 class UserRepository(BaseRepository):
@@ -24,18 +24,6 @@ class UserRepository(BaseRepository):
             about=UserAbout(**about),
             created_at=row["created_at"],
         )
-
-    def get_or_create_default(self) -> UserSchema:
-        """单用户模式：始终返回 id='default' 的用户，不存在则创建"""
-        user = self.get_by_id("default")
-        if user:
-            return user
-        now = utcnow_str()
-        self._execute(
-            "INSERT INTO users (id, name, preferences, about, created_at) VALUES (?,?,?,?,?)",
-            ("default", "用户", "{}", "{}", now),
-        )
-        return self.get_by_id("default")
 
     def update(
         self,

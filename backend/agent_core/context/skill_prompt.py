@@ -1,10 +1,17 @@
-"""
-AgentContextBuilder：通用 Agent 上下文构建器
+"""SkillPromptContextBuilder：基于 prompt 文件 + 技能的轻量上下文构建器。
 
-所有场景（tutor、extract 等）共用的基础实现：
-- 从指定 .md 文件读取 system prompt，支持热更新
-- 集成 SkillsLoader，支持 always 技能和按需技能注入
-- 支持 chat_history（多轮对话记忆）
+适用场景：业务侧需要"自定义 prompt 文件 + 按需注入技能 + 多轮对话历史"，
+但**不需要**用户画像和 agent.md（如 tutor、extract 等专用 Agent）。
+
+System prompt 由以下部分按顺序拼接（各部分之间以 ``---`` 分隔）：
+1. 从 prompt_file（.md）读取的角色定义
+2. Always Skills（标记了 always: true 的技能，始终注入）
+3. 按需技能（通过 skill_names kwarg 传入）
+4. Skills 摘要（供 Agent 按需读取）
+
+build_messages 支持的 kwargs：
+- chat_history: List[Any]  — 多轮对话历史（MessageSchema 列表）
+- skill_names:  List[str]  — 本次额外注入的技能名称
 """
 
 from __future__ import annotations
@@ -12,23 +19,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from agent_core.context.base import BaseContextBuilder
-from agent_core.llm.base import MessageRole
-from agent_core.skills.loader import SkillsLoader
+from ..llm.base import MessageRole
+from ..skills.loader import SkillsLoader
+from .base import BaseContextBuilder
 
 
-class AgentContextBuilder(BaseContextBuilder):
-    """通用 Agent 上下文构建器。
-
-    System prompt 由以下部分按顺序拼接（各部分之间以 ``---`` 分隔）：
-    1. 从 prompt_file（.md）读取的角色定义
-    2. Always Skills（标记了 always: true 的技能，始终注入）
-    3. 按需技能（通过 skill_names kwarg 传入）
-    4. Skills 摘要（供 Agent 按需读取）
-
-    build_messages 支持的 kwargs：
-    - chat_history: List[Any]  — 多轮对话历史（MessageSchema 列表）
-    - skill_names:  List[str]  — 本次额外注入的技能名称
+class SkillPromptContextBuilder(BaseContextBuilder):
+    """基于 prompt 文件 + 技能的上下文构建器。
 
     Args:
         prompt_file:   system prompt 的 .md 文件路径。
@@ -155,4 +152,4 @@ class AgentContextBuilder(BaseContextBuilder):
         self._prompt_cache = None
 
     def __repr__(self) -> str:
-        return f"AgentContextBuilder(prompt_file={self._prompt_file})"
+        return f"SkillPromptContextBuilder(prompt_file={self._prompt_file})"

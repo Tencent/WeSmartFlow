@@ -219,6 +219,7 @@
             </svg>
           </button>
           <button
+            v-if="doc.source === 'uploaded'"
             class="icon-btn danger"
             title="删除"
             @click.stop="deleteDoc(doc)"
@@ -666,7 +667,9 @@
           v-for="node in previewNodes"
           :key="node.id"
           class="extracted-node"
-          @click="$router.push('/knowledge')"
+          @click="
+            $router.push({ path: '/knowledge', query: { nodeId: node.id } })
+          "
         >
           <span class="en-emoji">{{ node.emoji }}</span>
           <div class="en-info">
@@ -689,7 +692,12 @@
         <button
           class="btn btn-ghost"
           style="width: 100%"
-          @click="$router.push('/graph')"
+          @click="
+            $router.push({
+              path: '/graph',
+              query: { nodeId: selectedDoc?.extracted_node_ids?.[0] },
+            })
+          "
         >
           <svg
             width="13"
@@ -715,7 +723,7 @@
 <script setup>
 import { ref, computed, onMounted } from "vue";
 import { documentApi, nodeApi } from "@/api";
-import { BASE_URL } from "@/api/base.js";
+import { api } from "@/api/base.js";
 
 const searchQuery = ref("");
 const activeFilter = ref("all");
@@ -805,9 +813,20 @@ async function viewContent(doc) {
   }
 }
 
-// 下载文档
-function downloadDocument(doc) {
-  window.open(`${BASE_URL}/api/documents/${doc.id}/download`, "_blank");
+// 下载文档（带鉴权）
+async function downloadDocument(doc) {
+  try {
+    const res = await api.getRaw(`/api/documents/${doc.id}/download`);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = doc.name || `document_${doc.id}`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  } catch (e) {
+    console.warn("下载文档失败:", e.message);
+  }
 }
 
 // 重新处理文档

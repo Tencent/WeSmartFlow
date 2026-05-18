@@ -326,6 +326,10 @@
 
 <script setup>
 import { ref, computed, onMounted } from "vue";
+import { userApi, nodeApi } from "@/api";
+import { useAuth } from "@/composables/useAuth.js";
+
+const { setUserProfile } = useAuth();
 
 const activeTab = ref("概览");
 const tabs = ["概览", "成就", "关于我"];
@@ -352,12 +356,8 @@ async function saveEdit() {
   if (!editName.value.trim()) return;
   editSaving.value = true;
   try {
-    const res = await fetch("/api/user", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: editName.value.trim() }),
-    });
-    userInfo.value = await res.json();
+    userInfo.value = await userApi.updateMe({ name: editName.value.trim() });
+    setUserProfile(userInfo.value); // 同步到全局，侧边栏实时更新
     showEdit.value = false;
   } finally {
     editSaving.value = false;
@@ -371,14 +371,14 @@ const allNodes = ref([]); // NodeBrief[]
 
 async function fetchData() {
   try {
-    const [userRes, dashRes, nodesRes] = await Promise.all([
-      fetch("/api/user"),
-      fetch("/api/user/dashboard"),
-      fetch("/api/nodes"),
+    const [userData, dashData, nodesData] = await Promise.all([
+      userApi.getMe(),
+      userApi.getDashboard(),
+      nodeApi.getAll(),
     ]);
-    userInfo.value = await userRes.json();
-    dashboard.value = await dashRes.json();
-    allNodes.value = await nodesRes.json();
+    userInfo.value = userData;
+    dashboard.value = dashData;
+    allNodes.value = nodesData;
     // 同步 about 数据
     if (userInfo.value?.about) {
       Object.assign(aboutData.value, userInfo.value.about);
@@ -549,12 +549,7 @@ let aboutSavedTimer = null;
 async function saveAbout() {
   aboutSaving.value = true;
   try {
-    const res = await fetch("/api/user", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ about: aboutData.value }),
-    });
-    userInfo.value = await res.json();
+    userInfo.value = await userApi.updateMe({ about: aboutData.value });
     aboutSaved.value = true;
     clearTimeout(aboutSavedTimer);
     aboutSavedTimer = setTimeout(() => {

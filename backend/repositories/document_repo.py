@@ -14,7 +14,8 @@ def _row_to_schema(row: dict) -> DocumentSchema:
         user_id=row["user_id"],
         title=row["title"],
         source=row["source"],
-        file_name=row["file_name"],  # 改为file_name
+        file_name=row["file_name"],
+        storage_key=row["storage_key"],
         file_type=row["file_type"],
         file_size=row["file_size"],
         status=row["status"],
@@ -22,7 +23,6 @@ def _row_to_schema(row: dict) -> DocumentSchema:
         total_pages=row["total_pages"],
         generated_from_session_id=row["generated_from_session_id"],
         generation_prompt=row.get("generation_prompt"),
-        generation_context=row.get("generation_context"),
         node_ids=_loads(row["node_ids"], []),
         created_at=row["created_at"],
         processed_at=row["processed_at"],
@@ -44,6 +44,7 @@ class DocumentRepository(BaseRepository):
                 file_size=r["file_size"],
                 status=r["status"],
                 total_pages=r["total_pages"],
+                node_ids=_loads(r["node_ids"], []),
                 node_count=len(_loads(r["node_ids"], [])),
                 created_at=r["created_at"],
             )
@@ -61,18 +62,18 @@ class DocumentRepository(BaseRepository):
         title: str,
         source: str,
         file_name: str,
+        storage_key: str,
         file_type: str,
         file_size: int,
         generated_from_session_id: str = None,
         generation_prompt: str = None,
-        generation_context: str = None,
     ) -> DocumentSchema:
         now = utcnow_str()
         self._execute(
             """
             INSERT INTO documents
-              (id, user_id, title, source, file_name, file_type, file_size,
-               status, generated_from_session_id, generation_prompt, generation_context, node_ids, created_at)
+              (id, user_id, title, source, file_name, storage_key, file_type, file_size,
+               status, generated_from_session_id, generation_prompt, node_ids, created_at)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
@@ -81,12 +82,12 @@ class DocumentRepository(BaseRepository):
                 title,
                 source,
                 file_name,
+                storage_key,
                 file_type,
                 file_size,
                 "pending",
                 generated_from_session_id,
                 generation_prompt,
-                generation_context,
                 "[]",
                 now,
             ),
@@ -99,6 +100,7 @@ class DocumentRepository(BaseRepository):
             title=title,
             source=source,
             file_name=file_name,
+            storage_key=storage_key,
             file_type=file_type,
             file_size=file_size,
             status="pending",
@@ -106,7 +108,6 @@ class DocumentRepository(BaseRepository):
             total_pages=None,
             generated_from_session_id=generated_from_session_id,
             generation_prompt=generation_prompt,
-            generation_context=generation_context,
             node_ids=[],
             created_at=now,
             processed_at=None,
@@ -118,10 +119,10 @@ class DocumentRepository(BaseRepository):
         user_id: str,
         title: str,
         file_name: str,
+        storage_key: str,
         file_type: str,
         file_size: int,
         generation_prompt: str,
-        generation_context: str,
         session_id: str = None,
         node_ids: list = None,
     ) -> DocumentSchema:
@@ -132,8 +133,8 @@ class DocumentRepository(BaseRepository):
         self._execute(
             """
             INSERT INTO documents
-              (id, user_id, title, source, file_name, file_type, file_size,
-               status, generated_from_session_id, generation_prompt, generation_context, node_ids, created_at)
+              (id, user_id, title, source, file_name, storage_key, file_type, file_size,
+               status, generated_from_session_id, generation_prompt, node_ids, created_at)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
@@ -142,12 +143,12 @@ class DocumentRepository(BaseRepository):
                 title,
                 "generated",
                 file_name,
+                storage_key,
                 file_type,
                 file_size,
                 "ready",
                 session_id,
                 generation_prompt,
-                generation_context,
                 node_ids_json,
                 now,
             ),
@@ -160,6 +161,7 @@ class DocumentRepository(BaseRepository):
             title=title,
             source="generated",
             file_name=file_name,
+            storage_key=storage_key,
             file_type=file_type,
             file_size=file_size,
             status="ready",
@@ -167,7 +169,6 @@ class DocumentRepository(BaseRepository):
             total_pages=None,
             generated_from_session_id=session_id,
             generation_prompt=generation_prompt,
-            generation_context=generation_context,
             node_ids=node_ids or [],
             created_at=now,
             processed_at=now,

@@ -1,19 +1,14 @@
 """
-BaseAgent：通用 Agent 基类
+ChatAgent：流式聊天 Agent
 
-所有场景（tutor、extract 等）共用的基础实现：
-- stream_chat：流式单轮对话（SSE 场景）
-- run：非流式单次运行（后台任务场景）
+继承 ReActAgent，对外暴露语义化的 ``stream_chat()`` 接口，专为 SSE / 实时对话场景使用。
 
-子类只需继承并添加场景特有方法，无需重复实现基础能力。
+之所以独立命名 ChatAgent（而非沿用 BaseAgent），是为了避免与
+``agent_core.agent.base.BaseAgent``（抽象基类）发生命名冲突，让"业务侧聊天 agent"
+与"框架侧抽象基类"在导入时一目了然。
 """
 
 from __future__ import annotations
-
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import logging
 from typing import Any, AsyncGenerator
@@ -24,12 +19,12 @@ from agent_core.agent.react import ReActAgent
 logger = logging.getLogger(__name__)
 
 
-class BaseAgent(ReActAgent):
-    """通用 Agent 基类。
+class ChatAgent(ReActAgent):
+    """业务侧通用流式聊天 Agent。
 
     提供两种运行模式：
     - stream_chat：流式输出，逐步 yield AgentStreamEvent（适合 SSE / 实时对话）
-    - run：非流式运行，等待完整结果返回（适合后台任务）
+    - run（继承自 ReActAgent）：非流式运行，等待完整结果返回（适合后台任务）
 
     工具注册、ContextBuilder 组装均由调用方（Service 层或子类）完成。
     """

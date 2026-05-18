@@ -44,12 +44,14 @@ for _d in [
 
 
 def _safe_copy(src: Path, dst: Path) -> bool:
-    """安全复制文件，如果目标已存在则跳过。"""
+    """安全复制文件。如果目标已存在且源文件更新过，则覆盖；否则跳过。"""
     if not src.exists():
         return False
     if dst.exists():
-        # 文件已存在，跳过
-        return True
+        # 比较修改时间，源文件更新则覆盖
+        if src.stat().st_mtime <= dst.stat().st_mtime:
+            return True
+        logger.debug("源文件已更新，覆盖归档: %s", dst.name)
     try:
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(str(src), str(dst))
@@ -80,8 +82,14 @@ def archive_pdf(
     if not src_path.exists():
         return None
 
-    # 使用 source_type + 原文件名 作为备份文件名，避免冲突
-    dst_name = f"{source_type}_{src_path.name}"
+    # 使用 source_type + session_id前缀 + 父目录名 + 原文件名 作为备份文件名，避免冲突
+    # 例如: card_{card_id}_card.pdf 或 immersive_{sid_short}_{chapter_id}_chapter_01.pdf
+    parent_name = src_path.parent.name
+    if session_id:
+        sid_short = session_id[:8]
+        dst_name = f"{source_type}_{sid_short}_{parent_name}_{src_path.name}"
+    else:
+        dst_name = f"{source_type}_{parent_name}_{src_path.name}"
     dst = ASSETS_PDF_DIR / dst_name
 
     # 同时保存元信息
@@ -127,6 +135,8 @@ def archive_image(
         return None
 
     dst_name = f"{source_type}_{src_path.name}"
+    if chapter:
+        dst_name = f"{source_type}_{chapter}_{src_path.name}"
     dst = ASSETS_IMAGES_DIR / dst_name
 
     # 保存图片元信息（含提示词）
@@ -216,6 +226,10 @@ def archive_immersive_chapter(
     """
     stats = {"pdf": 0, "images": 0, "audio": 0}
 
+    # 使用 session_id 前8位 + chapter_id 组合作为唯一标识，防止不同课程同名章节碰撞
+    sid_short = session_id[:8] if session_id else ""
+    unique_chapter = f"{sid_short}_{chapter_id}" if sid_short else chapter_id
+
     # 归档 PDF
     for pdf in chapter_dir.glob("*.pdf"):
         if archive_pdf(
@@ -229,7 +243,10 @@ def archive_immersive_chapter(
     # 归档图片（含 meta.json 中的提示词）
     images_dir = chapter_dir / "images"
     if images_dir.exists():
-        for img in images_dir.glob("*.png"):
+        img_extensions = {".png", ".jpg", ".jpeg", ".webp"}
+        for img in images_dir.iterdir():
+            if img.suffix.lower() not in img_extensions:
+                continue
             prompt = ""
             meta_file = images_dir / f"{img.stem}.meta.json"
             if meta_file.exists():
@@ -239,24 +256,32 @@ def archive_immersive_chapter(
                 except Exception:  # pylint: disable=broad-except
                     pass
             if archive_image(
-                img, prompt=prompt, source_type="immersive", chapter=chapter_id
+                img, prompt=prompt, source_type="immersive", chapter=unique_chapter
             ):
                 stats["images"] += 1
         # 也备份原始 meta.json
         for meta in images_dir.glob("*.meta.json"):
-            _safe_copy(meta, ASSETS_IMAGES_DIR / f"immersive_{meta.name}")
+            _safe_copy(
+                meta, ASSETS_IMAGES_DIR / f"immersive_{unique_chapter}_{meta.name}"
+            )
 
     # 归档语音
     audio_dir = chapter_dir / "audio"
     if audio_dir.exists():
-        for wav in sorted(audio_dir.glob("*.wav")):
+        audio_extensions = {".wav", ".mp3"}
+        for audio_file in sorted(audio_dir.iterdir()):
+            if audio_file.suffix.lower() not in audio_extensions:
+                continue
             idx = 0
             try:
-                idx = int(wav.stem.split("_")[-1])
+                idx = int(audio_file.stem.split("_")[-1])
             except (ValueError, IndexError):
                 pass
             if archive_audio(
-                wav, source_type="immersive", chapter=chapter_id, frame_index=idx
+                audio_file,
+                source_type="immersive",
+                chapter=unique_chapter,
+                frame_index=idx,
             ):
                 stats["audio"] += 1
 
@@ -312,7 +337,11 @@ def pack_chapter_bundle(
     # 收集文件：PDF、语音（整个 audio 目录）、习题 md
     pdf_files = sorted(chapter_dir.glob("*.pdf"))
     audio_dir = chapter_dir / "audio"
-    audio_files = sorted(audio_dir.glob("*.wav")) if audio_dir.exists() else []
+    audio_files = (
+        sorted(f for f in audio_dir.iterdir() if f.suffix.lower() in {".wav", ".mp3"})
+        if audio_dir.exists()
+        else []
+    )
     exercises_files = sorted(chapter_dir.glob("*_exercises.md"))
     # 也把 speaker_notes 一并放入，便于回看讲解稿
     notes_files = sorted(chapter_dir.glob("speaker_notes.json"))
@@ -396,7 +425,8 @@ def archive_card(card_pdf_path: Path, title: str = "", session_id: str = "") -> 
     # 如果有对应的 tex 文件也备份
     tex_path = card_pdf_path.with_suffix(".tex")
     if tex_path.exists():
-        _safe_copy(tex_path, ASSETS_PDF_DIR / f"card_{tex_path.name}")
+        card_id = card_pdf_path.parent.name
+        _safe_copy(tex_path, ASSETS_PDF_DIR / f"card_{card_id}_{tex_path.name}")
 
     return stats
 
@@ -413,25 +443,86 @@ def archive_existing_assets() -> dict:
 
     total_stats = {"pdf": 0, "images": 0, "audio": 0}
 
-    # 1. 归档已有的卡片 PDF
+    # 1. 归档已有的卡片（PDF + 音频）
     if CARDS_DIR.exists():
-        for pdf in CARDS_DIR.glob("*.pdf"):
-            if archive_pdf(pdf, source_type="card"):
-                total_stats["pdf"] += 1
+        for card_dir in CARDS_DIR.iterdir():
+            if not card_dir.is_dir():
+                continue
+            card_id = card_dir.name
+            # 归档 PDF
+            for pdf in card_dir.glob("*.pdf"):
+                if archive_pdf(pdf, source_type="card"):
+                    total_stats["pdf"] += 1
+            # 归档图片
+            img_extensions = {".png", ".jpg", ".jpeg", ".webp"}
+            for img in card_dir.iterdir():
+                if img.suffix.lower() in img_extensions:
+                    prompt = ""
+                    meta_file = card_dir / f"{img.stem}.meta.json"
+                    if meta_file.exists():
+                        try:
+                            _meta = json.loads(meta_file.read_text(encoding="utf-8"))
+                            prompt = _meta.get("prompt", "")
+                        except Exception:  # pylint: disable=broad-except
+                            pass
+                    if archive_image(
+                        img, prompt=prompt, source_type="card", chapter=card_id
+                    ):
+                        total_stats["images"] += 1
+            # 归档音频
+            audio_dir = card_dir / "audio"
+            if audio_dir.exists():
+                notes = []
+                notes_path = card_dir / "notes.json"
+                if notes_path.exists():
+                    try:
+                        notes = json.loads(notes_path.read_text(encoding="utf-8"))
+                    except Exception:  # pylint: disable=broad-except
+                        pass
+                audio_extensions = {".wav", ".mp3"}
+                for audio_file in sorted(audio_dir.iterdir()):
+                    if audio_file.suffix.lower() not in audio_extensions:
+                        continue
+                    m = re.match(r"frame_(\d+)", audio_file.stem)
+                    frame_idx = int(m.group(1)) if m else 0
+                    text = notes[frame_idx - 1] if 0 < frame_idx <= len(notes) else ""
+                    if archive_audio(
+                        audio_file,
+                        text=text,
+                        source_type="card",
+                        chapter=card_id,
+                        frame_index=frame_idx,
+                    ):
+                        total_stats["audio"] += 1
 
     # 2. 归档沉浸式课件
-    immersive_courses = DATA_DIR / "immersive" / "courses"
-    if immersive_courses.exists():
-        for topic_dir in immersive_courses.iterdir():
-            if not topic_dir.is_dir():
+    # 课程目录结构: COURSES_DIR / {course_slug} / chapter_XX/
+    # course_slug 格式: {topic_slugified}_{session_id}
+    from config import COURSES_DIR
+
+    if COURSES_DIR.exists():
+        for course_dir in COURSES_DIR.iterdir():
+            if not course_dir.is_dir():
                 continue
-            topic = topic_dir.name
-            for chapter_dir in sorted(topic_dir.iterdir()):
+            # 从 course_slug 中提取 topic 和 session_id
+            # course_slug 格式: {topic}_{session_id(UUID)}
+            course_slug = course_dir.name
+            # session_id 是 UUID 格式（36字符含连字符），尝试分离
+            parts = course_slug.rsplit("_", 1)
+            if len(parts) == 2 and len(parts[1]) >= 32:
+                topic = parts[0]
+                course_session_id = parts[1]
+            else:
+                topic = course_slug
+                course_session_id = ""
+            for chapter_dir in sorted(course_dir.iterdir()):
                 if not chapter_dir.is_dir() or not chapter_dir.name.startswith(
                     "chapter_"
                 ):
                     continue
-                stats = archive_immersive_chapter(chapter_dir, topic, chapter_dir.name)
+                stats = archive_immersive_chapter(
+                    chapter_dir, topic, chapter_dir.name, course_session_id
+                )
                 for k in total_stats:
                     total_stats[k] += stats.get(k, 0)
 

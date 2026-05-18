@@ -72,6 +72,13 @@ class NodeRepository(BaseRepository):
         row = self._fetchone("SELECT * FROM nodes WHERE id = ?", (node_id,))
         return _row_to_schema(row) if row else None
 
+    def find_by_title(self, user_id: str, title: str) -> Optional[str]:
+        """按 (user_id, title) 查找节点 ID（用于查重）；未找到返回 None。"""
+        row = self._fetchone(
+            "SELECT id FROM nodes WHERE user_id=? AND title=?", (user_id, title)
+        )
+        return row["id"] if row else None
+
     def get_due_today(self, user_id: str) -> list[NodeBrief]:
         """获取今天到期需要复习的节点"""
         today = datetime.now(timezone.utc).date().isoformat()
@@ -96,7 +103,9 @@ class NodeRepository(BaseRepository):
             for r in rows
         ]
 
-    def create(self, user_id: str, data: NodeCreate) -> NodeSchema:
+    def create(
+        self, user_id: str, data: NodeCreate, initial_mastery: float = 0.0
+    ) -> NodeSchema:
         node_id = new_id()
         now = utcnow_str()
         # 初始 due_date = 明天
@@ -124,7 +133,7 @@ class NodeRepository(BaseRepository):
                 0,
                 due_date,
                 None,
-                0.0,
+                initial_mastery,
                 now,
                 now,
             ),

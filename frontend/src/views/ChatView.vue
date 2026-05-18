@@ -173,11 +173,7 @@
           <!-- 工具栏 -->
           <div class="slide-toolbar">
             <div class="st-left">
-              <button
-                class="back-btn"
-                title="重新选择主题"
-                @click="resetToIdle"
-              >
+              <button class="back-btn" title="重新选择主题" @click="handleBack">
                 <svg
                   width="14"
                   height="14"
@@ -820,7 +816,7 @@
                         font-weight: 700;
                       "
                     >
-                      袁
+                      {{ userInitial }}
                     </div>
                   </div>
                 </div>
@@ -1402,13 +1398,44 @@
         </div>
       </div>
     </transition>
+
+    <!-- ══ 离开确认弹窗 ══ -->
+    <transition name="modal">
+      <div
+        v-if="showLeaveConfirm"
+        class="leave-confirm-overlay"
+        @click.self="showLeaveConfirm = false"
+      >
+        <div class="leave-confirm-card">
+          <div class="lc-icon">⚠️</div>
+          <div class="lc-title">确认离开？</div>
+          <div class="lc-desc">
+            当前正在生成内容，离开将会<strong>中断生成</strong>，已生成的部分内容可能丢失。
+          </div>
+          <div class="lc-actions">
+            <button
+              class="btn btn-ghost btn-sm"
+              @click="showLeaveConfirm = false"
+            >
+              继续等待
+            </button>
+            <button class="btn btn-danger btn-sm" @click="confirmLeave">
+              确认离开
+            </button>
+          </div>
+        </div>
+      </div>
+    </transition>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, nextTick, onMounted, onUnmounted, watch } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, onBeforeRouteLeave } from "vue-router";
 import { sessionApi, BASE_URL } from "@/api";
+import { authHeaders, fetchAsBlobUrl } from "@/api/base.js";
+import { api } from "@/api/base.js";
+import { useAuth } from "@/composables/useAuth.js";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import katex from "katex";
@@ -1599,6 +1626,12 @@ function renderMd(text) {
 }
 
 const route = useRoute();
+const { userName: authUserName } = useAuth();
+// 用户名称首字母（大写）
+const userInitial = computed(() => {
+  const name = authUserName.value || "U";
+  return name.charAt(0).toUpperCase();
+});
 
 // ── 学习模式 ─────────────────────────────────────────────────────
 // 'chat' = 人机交互学习, 'immersive' = AI 主导学习
@@ -2212,8 +2245,7 @@ async function imStartGenerate() {
   imAddLog(`🚀 开始生成课件：${currentTopic.value}`);
 
   try {
-    const res = await fetch(`${BASE_URL}/api/immersive/generate`, {
-      method: "POST",
+    const res = await api.postRaw(`/api/immersive/generate`, {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ topic: currentTopic.value }),
     });
@@ -2230,8 +2262,8 @@ async function imStartGenerate() {
         if (!line.startsWith("data: ")) continue;
         try {
           imHandleSSE(JSON.parse(line.slice(6).trim()));
-        } catch {
-          console.error("[SSE]", line);
+        } catch (e) {
+          console.error("SSE 解析失败：error: ", e, "data: ", line);
         }
       }
     }
@@ -2251,10 +2283,14 @@ function imHandleSSE(data) {
   const eventType = data.event_type || "unknown";
   const step = data.step || 0;
 
-  let content =
-    data.content.length > 15
-      ? data.content.substring(0, 15) + "..."
-      : data.content;
+  let content = "";
+
+  if (data.content && data.content.length) {
+    content =
+      data.content.length > 15
+        ? data.content.substring(0, 15) + "..."
+        : data.content;
+  }
 
   if (window.debug) console.log("[SSE]", data.type, data);
   switch (data.type) {
@@ -2365,8 +2401,8 @@ async function imSelectChapter(idx) {
   if (!ch?.pdf_exists || !ch.pdf_path) return;
   if (ch.exercises_exists && ch.exercises_path) {
     try {
-      const exRes = await fetch(
-        `${BASE_URL}/api/immersive/files/${ch.exercises_path}`,
+      const exRes = await api.getRaw(
+        `/api/immersive/files/${ch.exercises_path}`,
       );
       const md = await exRes.text();
       imExercisesHtml.value = renderMd(md);
@@ -2385,6 +2421,7 @@ async function imSelectChapter(idx) {
     try {
       const doc = await pdfjsLib.getDocument({
         url: pdfUrl,
+        httpHeaders: authHeaders(),
         cMapUrl: "https://unpkg.com/pdfjs-dist@5.6.205/cmaps/",
         cMapPacked: true,
       }).promise;
@@ -2427,8 +2464,23 @@ async function imGotoPage(num) {
   const ch = imChapters.value[imCurrentChapterIndex.value];
   if (!ch?.pdf_path) return;
   const pdfUrl = `${BASE_URL}/api/immersive/files/${ch.pdf_path}`;
-  const doc = imPdfDocMap.get(pdfUrl);
-  if (doc) await imRenderPage(doc, num);
+  let doc = imPdfDocMap.get(pdfUrl);
+  // 缓存未命中时自动带鉴权加载
+  if (!doc) {
+    try {
+      doc = await pdfjsLib.getDocument({
+        url: pdfUrl,
+        httpHeaders: authHeaders(),
+        cMapUrl: "https://unpkg.com/pdfjs-dist@5.6.205/cmaps/",
+        cMapPacked: true,
+      }).promise;
+      imPdfDocMap.set(pdfUrl, doc);
+    } catch (e) {
+      imAddLog(`PDF 加载失败: ${e.message}`, "error");
+      return;
+    }
+  }
+  await imRenderPage(doc, num);
 }
 
 function imPlayAudio() {
@@ -2439,15 +2491,24 @@ function imPlayAudio() {
     return;
   }
   if (imCurrentAudio) imCurrentAudio.pause();
-  imCurrentAudio = new Audio(imCurrentAudioUrl.value);
-  imCurrentAudio.play();
-  imIsPlaying.value = true;
-  imCurrentAudio.onended = () => {
-    imIsPlaying.value = false;
-  };
-  imCurrentAudio.onerror = () => {
-    imIsPlaying.value = false;
-  };
+  // 沉浸式音频接口需要鉴权，先 fetch 为 blob 再喂给 <audio>
+  const audioPath = imCurrentAudioUrl.value.replace(BASE_URL, "");
+  fetchAsBlobUrl(audioPath)
+    .then((blobUrl) => {
+      imCurrentAudio = new Audio(blobUrl);
+      imCurrentAudio.play();
+      imIsPlaying.value = true;
+      const cleanup = () => {
+        imIsPlaying.value = false;
+        URL.revokeObjectURL(blobUrl);
+      };
+      imCurrentAudio.onended = cleanup;
+      imCurrentAudio.onerror = cleanup;
+    })
+    .catch((e) => {
+      imAddLog(`音频加载失败: ${e.message}`, "error");
+      imIsPlaying.value = false;
+    });
 }
 
 watch(imCurrentPage, () => {
@@ -2501,8 +2562,11 @@ onMounted(async () => {
               .replace(/[^a-zA-Z0-9\u4e00-\u9fff]+/g, "_")
               .replace(/^_|_$/g, "")
               .slice(0, 60) || "untitled";
-          const outlineRes = await fetch(
-            `${BASE_URL}/api/immersive/files/courses/${encodeURIComponent(courseSlug)}/outline.json`,
+          // 目录结构：{courseSlug}_{session_id}/outline.json
+          const sid = currentSessionId.value;
+          const courseDirName = `${courseSlug}_${sid}`;
+          const outlineRes = await api.getRaw(
+            `/api/immersive/files/${encodeURIComponent(courseDirName)}/outline.json`,
           );
           if (outlineRes.ok) {
             imOutline.value = await outlineRes.json();
@@ -2514,17 +2578,17 @@ onMounted(async () => {
           console.error("加载大纲失败", ex);
         }
 
-        // 从 files 恢复章节列表（只加载 courses/ 开头的课程 PDF，排除卡片）
+        // 从 files 恢复章节列表（只加载包含 chapter_ 的课程 PDF，排除卡片）
         if (detail.files && detail.files.length > 0) {
           for (const f of detail.files) {
             if (
               f.file_type === "pdf" &&
               f.file_id &&
-              f.file_id.startsWith("courses/")
+              f.file_id.includes("/chapter_")
             ) {
               const chIdx = imChapters.value.length;
               const chId = chIdx + 1;
-              // file_id 格式: courses/递归算法/chapter_01/chapter_01.pdf
+              // file_id 格式: {topic_slug}_{session_id}/chapter_01/chapter_01.pdf
               const filePath = f.file_id;
               const chapterDir = filePath.replace(/\/[^/]+\.pdf$/, "");
 
@@ -2532,8 +2596,8 @@ onMounted(async () => {
               const exPath = `${chapterDir}/chapter_${String(chId).padStart(2, "0")}_exercises.md`;
               let hasExercises = false;
               try {
-                const exRes = await fetch(
-                  `${BASE_URL}/api/immersive/files/${exPath}`,
+                const exRes = await api.getRaw(
+                  `/api/immersive/files/${exPath}`,
                 );
                 hasExercises = exRes.ok;
               } catch (ex) {
@@ -2544,8 +2608,8 @@ onMounted(async () => {
               const notesPath = `${chapterDir}/speaker_notes.json`;
               let audioFiles = [];
               try {
-                const notesRes = await fetch(
-                  `${BASE_URL}/api/immersive/files/${notesPath}`,
+                const notesRes = await api.getRaw(
+                  `/api/immersive/files/${notesPath}`,
                 );
                 if (notesRes.ok) {
                   const notes = await notesRes.json();
@@ -2818,10 +2882,10 @@ let cardCurrentAudio = null;
 const cardAudioUrl = computed(() => {
   const card = pdfCards.value[currentPdfIndex.value];
   if (!card?.fileId) return "";
-  // fileId 可能带 .pdf 后缀（如 "xxx.pdf"），音频目录名是 "xxx_audio"
-  const cardId = card.fileId.replace(/\.pdf$/i, "");
+  // fileId 格式: "{card_id}/card.pdf"，提取 card_id
+  const cardId = card.fileId.split("/")[0];
   const frameNum = String(currentPageIndex.value + 1).padStart(3, "0");
-  return `${BASE_URL}/files/cards/${cardId}_audio/frame_${frameNum}.wav`;
+  return `${BASE_URL}/files/cards/${cardId}/audio/frame_${frameNum}.wav`;
 });
 
 function playCardAudio() {
@@ -2832,17 +2896,25 @@ function playCardAudio() {
     return;
   }
   if (cardCurrentAudio) cardCurrentAudio.pause();
-  cardCurrentAudio = new Audio(cardAudioUrl.value);
-  cardCurrentAudio.play().catch(() => {
-    cardIsPlaying.value = false;
-  });
-  cardIsPlaying.value = true;
-  cardCurrentAudio.onended = () => {
-    cardIsPlaying.value = false;
-  };
-  cardCurrentAudio.onerror = () => {
-    cardIsPlaying.value = false;
-  };
+  // 卡片音频接口需要鉴权，先 fetch 为 blob 再喂给 <audio>
+  const audioPath = cardAudioUrl.value.replace(BASE_URL, "");
+  fetchAsBlobUrl(audioPath)
+    .then((blobUrl) => {
+      cardCurrentAudio = new Audio(blobUrl);
+      cardCurrentAudio.play().catch(() => {
+        cardIsPlaying.value = false;
+      });
+      cardIsPlaying.value = true;
+      const cleanup = () => {
+        cardIsPlaying.value = false;
+        URL.revokeObjectURL(blobUrl);
+      };
+      cardCurrentAudio.onended = cleanup;
+      cardCurrentAudio.onerror = cleanup;
+    })
+    .catch(() => {
+      cardIsPlaying.value = false;
+    });
 }
 
 // 切页时停止音频
@@ -2891,6 +2963,7 @@ async function selectCard(idx) {
       console.log("[PDF] 开始加载 PDF:", card.url);
       const pdfDoc = await pdfjsLib.getDocument({
         url: card.url,
+        httpHeaders: authHeaders(),
         cMapUrl: "https://unpkg.com/pdfjs-dist@5.6.205/cmaps/",
         cMapPacked: true,
       }).promise;
@@ -3053,6 +3126,49 @@ const currentIndex = ref(0);
 
 const currentSlide = computed(() => slides.value[currentIndex.value] || null);
 
+// ── 离开确认 ─────────────────────────────────────────────────────
+const showLeaveConfirm = ref(false);
+let pendingLeaveAction = null; // 'reset' | Function (路由守卫的 next)
+
+// 是否有任何生成任务正在进行
+const isAnythingGenerating = computed(
+  () =>
+    isGenerating.value ||
+    phase.value === "generating" ||
+    imGenerating.value ||
+    imAgentGenerating.value,
+);
+
+function handleBack() {
+  if (isAnythingGenerating.value) {
+    pendingLeaveAction = "reset";
+    showLeaveConfirm.value = true;
+  } else {
+    resetToIdle();
+  }
+}
+
+function confirmLeave() {
+  showLeaveConfirm.value = false;
+  if (pendingLeaveAction === "reset") {
+    resetToIdle();
+  } else if (typeof pendingLeaveAction === "function") {
+    pendingLeaveAction();
+  }
+  pendingLeaveAction = null;
+}
+
+// 路由离开守卫
+onBeforeRouteLeave((to, from, next) => {
+  if (isAnythingGenerating.value) {
+    pendingLeaveAction = next;
+    showLeaveConfirm.value = true;
+    // 不调用 next()，阻止导航
+  } else {
+    next();
+  }
+});
+
 // ── 重置 ─────────────────────────────────────────────────────────
 function resetToIdle() {
   if (currentSessionId.value && sessionStartTime) {
@@ -3104,12 +3220,22 @@ function resetToIdle() {
   imPdfDocMap.clear();
 }
 
+// 浏览器关闭/刷新拦截
+function handleBeforeUnload(e) {
+  if (isAnythingGenerating.value) {
+    e.preventDefault();
+    e.returnValue = "";
+  }
+}
+
 onMounted(() => {
   window.addEventListener("resize", onWindowResize);
+  window.addEventListener("beforeunload", handleBeforeUnload);
 });
 onUnmounted(() => {
   if (sseController) sseController.abort();
   window.removeEventListener("resize", onWindowResize);
+  window.removeEventListener("beforeunload", handleBeforeUnload);
   // 离开页面时上报本次会话学习时长
   if (currentSessionId.value && sessionStartTime) {
     const minutes = Math.max(
@@ -3126,12 +3252,19 @@ const isExporting = ref(false);
 async function exportSlides() {
   if (isExporting.value || pdfCards.value.length === 0) return;
 
-  // 只有一张卡片时直接下载，无需合并
+  // 只有一张卡片时直接下载，无需合并（走鉴权 fetch 转 blob）
   if (pdfCards.value.length === 1) {
-    const a = document.createElement("a");
-    a.href = pdfCards.value[0].url;
-    a.download = `${pdfCards.value[0].title || "slides"}.pdf`;
-    a.click();
+    try {
+      const card = pdfCards.value[0];
+      const blobUrl = await fetchAsBlobUrl(card.url.replace(BASE_URL, ""));
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `${card.title || "slides"}.pdf`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+    } catch (e) {
+      console.error("PDF 下载失败:", e);
+    }
     return;
   }
 
@@ -3139,7 +3272,7 @@ async function exportSlides() {
   try {
     const merged = await PDFDocument.create();
     for (const card of pdfCards.value) {
-      const res = await fetch(card.url);
+      const res = await api.getRaw(card.url.replace(BASE_URL, ""));
       const bytes = await res.arrayBuffer();
       const src = await PDFDocument.load(bytes);
       const pages = await merged.copyPages(src, src.getPageIndices());
@@ -3155,8 +3288,19 @@ async function exportSlides() {
     setTimeout(() => URL.revokeObjectURL(url), 5000);
   } catch (e) {
     console.error("PDF 合并失败:", e);
-    // 降级：逐个打开
-    pdfCards.value.forEach((card) => window.open(card.url, "_blank"));
+    // 降级：逐个下载（同样走鉴权 blob）
+    for (const card of pdfCards.value) {
+      try {
+        const blobUrl = await fetchAsBlobUrl(card.url.replace(BASE_URL, ""));
+        const a = document.createElement("a");
+        a.href = blobUrl;
+        a.download = `${card.title || "slides"}.pdf`;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+      } catch (downloadErr) {
+        console.error("单卡下载失败:", downloadErr);
+      }
+    }
   } finally {
     isExporting.value = false;
   }
@@ -5736,5 +5880,80 @@ onUnmounted(() => {
 .imq-retry-btn:hover {
   background: var(--bg-hover);
   border-color: var(--border-active);
+}
+
+/* ── 离开确认弹窗 ─────────────────────────────────────────── */
+.leave-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(4px);
+}
+.leave-confirm-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl, 16px);
+  padding: 32px 36px;
+  max-width: 380px;
+  width: 90%;
+  text-align: center;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
+  animation: lc-pop 0.2s ease-out;
+}
+@keyframes lc-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.lc-icon {
+  font-size: 36px;
+  margin-bottom: 12px;
+}
+.lc-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+.lc-desc {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin-bottom: 24px;
+}
+.lc-desc strong {
+  color: var(--danger, #ef4444);
+}
+.lc-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+.lc-actions .btn {
+  min-width: 100px;
+  padding: 8px 20px;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.btn-danger {
+  background: var(--danger, #ef4444);
+  color: #fff;
+  border: 1px solid var(--danger, #ef4444);
+}
+.btn-danger:hover {
+  background: #dc2626;
+  border-color: #dc2626;
 }
 </style>

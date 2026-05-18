@@ -6,7 +6,7 @@
  * POST /api/sessions/:id/chat/stream  发送消息（SSE 流式）
  * PATCH /api/sessions/:id/duration 记录学习时长
  */
-import { api, BASE_URL } from "./base.js";
+import { api } from "./base.js";
 
 // ── SSE 调试开关 ──────────────────────────────────────────────
 // 设为 true 后，浏览器控制台会打印每一条原始 SSE 数据
@@ -150,12 +150,12 @@ export const sessionApi = {
     const { onError } = callbacks;
     const controller = new AbortController();
 
-    fetch(`${BASE_URL}/api/sessions/${sessionId}/chat/stream`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content }),
-      signal: controller.signal,
-    })
+    api
+      .postRaw(`/api/sessions/${sessionId}/chat/stream`, {
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content }),
+        signal: controller.signal,
+      })
       .then(async (res) => {
         if (!res.ok) {
           await handleSSEError(res, onError);

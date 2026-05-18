@@ -77,13 +77,20 @@ class BaseTool(ABC):
         "required": [],
     }
 
-    def __init__(self, on_result_hook: Optional[ToolResultHook] = None, **kwargs: Any):
+    def __init__(
+        self,
+        on_result_hook: Optional[ToolResultHook] = None,
+        before_call_hook: Optional[Callable[[], Union[None, Awaitable[None]]]] = None,
+        **kwargs: Any,
+    ):
         """允许通过构造函数覆盖类属性。
 
         Args:
             on_result_hook: 工具执行完毕后的回调，签名为
                 ``(tool_name: str, params: dict, result: Any) -> None``。
                 支持普通函数和 async 函数，两种形式均可。
+            before_call_hook: 工具执行前的回调（如额度检查），签名为
+                ``() -> None``。支持普通函数和 async 函数。
         """
         if "name" in kwargs:
             self.name = kwargs["name"]
@@ -98,6 +105,7 @@ class BaseTool(ABC):
             raise ValueError("工具必须定义 description")
 
         self._on_result_hook: Optional[ToolResultHook] = on_result_hook
+        self._before_call_hook = before_call_hook
 
     # ------------------------------------------------------------------
     # JSON Schema 输出
@@ -418,6 +426,18 @@ class BaseTool(ABC):
 
     def __call__(self, **kwargs: Any) -> Any:
         """支持直接以函数形式调用: ``tool(city="北京")``"""
+        # 执行前 hook（额度检查等）
+        if self._before_call_hook is not None:
+            ret = self._before_call_hook()
+            if asyncio.iscoroutine(ret):
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        loop.create_task(ret)
+                    else:
+                        loop.run_until_complete(ret)
+                except RuntimeError:
+                    asyncio.run(ret)
         casted = self.cast_params(kwargs)
         errors = self.validate_params(casted)
         if errors:
@@ -439,6 +459,11 @@ class BaseTool(ABC):
 
     async def async_call(self, **kwargs: Any) -> Any:
         """异步便捷调用。"""
+        # 执行前 hook（额度检查等）
+        if self._before_call_hook is not None:
+            ret = self._before_call_hook()
+            if asyncio.iscoroutine(ret):
+                await ret
         casted = self.cast_params(kwargs)
         errors = self.validate_params(casted)
         if errors:

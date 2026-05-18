@@ -91,6 +91,29 @@ class QuizRepository(BaseRepository):
 
 
 class StudyLogRepository(BaseRepository):
+    def add_log(
+        self, user_id: str, minutes: int, session_id: Optional[str], node_ids: list[str]
+    ) -> None:
+        """直接插入一条今日学习记录（不合并，用于明确希望保留独立条目的场景，如 AI 课程）。"""
+        from zoneinfo import ZoneInfo
+
+        today = datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()
+        self._execute(
+            """
+            INSERT INTO study_logs (id, user_id, date, minutes, session_id, node_ids, created_at)
+            VALUES (?,?,?,?,?,?,?)
+            """,
+            (
+                new_id(),
+                user_id,
+                today,
+                minutes,
+                session_id,
+                _dumps(node_ids),
+                utcnow_str(),
+            ),
+        )
+
     def upsert_today(
         self, user_id: str, minutes: int, session_id: Optional[str], node_ids: list[str]
     ) -> None:

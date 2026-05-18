@@ -909,10 +909,11 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted, nextTick } from "vue";
-import { useRouter } from "vue-router";
+import { useRouter, useRoute } from "vue-router";
 import { nodeApi } from "@/api";
 
 const router = useRouter();
+const route = useRoute();
 const canvasWrap = ref(null);
 const svgW = ref(900);
 const svgH = ref(620);
@@ -1655,6 +1656,16 @@ function relayoutWithRealSize() {
 
 onMounted(async () => {
   await loadNodes();
+
+  // 如果路由带了 nodeId 参数，自动选中该节点
+  const targetNodeId = route.query.nodeId;
+  if (targetNodeId) {
+    const target = nodes.value.find((n) => n.id === targetNodeId);
+    if (target) {
+      selectNode(target);
+    }
+  }
+
   if (viewMode.value !== "graph") return;
   // nextTick 确保 DOM 已渲染，再用 ResizeObserver 等待画布有实际尺寸
   await nextTick();

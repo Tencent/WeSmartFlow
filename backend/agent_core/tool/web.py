@@ -228,19 +228,14 @@ class TavilySearch(BaseTool):
         "required": ["query"],
     }
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, api_key: str | None = None, before_call_hook=None):
+        self._api_key = api_key
+        super().__init__(before_call_hook=before_call_hook)
 
     def _get_api_key(self) -> str:
-        """优先从数据库 settings 表读取，回退到环境变量。"""
-        try:
-            from database import get_setting
-
-            key = get_setting("tavily_api_key") or ""
-            if key:
-                return key
-        except Exception:  # pylint: disable=broad-except
-            pass
+        """优先使用构造时传入的 api_key，回退到环境变量。"""
+        if self._api_key:
+            return self._api_key
         return os.getenv("TAVILY_API_KEY", "")
 
     def run(
