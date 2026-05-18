@@ -2,15 +2,19 @@
 
 # WeSmartFlow
 
-**面向教育场景的 Agent-native 自适应学习框架**
+**Agent-native 自适应学习框架，让 AI 真正理解学习过程**
 
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![Vue 3](https://img.shields.io/badge/Vue-3-4FC08D?style=flat-square&logo=vue.js&logoColor=white)](https://vuejs.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](./LICENSE)
 
-探索 AI Agent 如何从通用问答深入真实学习过程——<br/>
-承担知识诊断、学习路径规划、个性化辅导、内容生成、测验反馈和长期记忆演化。
+🌐 [wesmartflow.cn](http://wesmartflow.cn) *(coming soon)*
+
+**[English](./README_EN.md) | 中文**
+
+AI Agent 不只是回答问题——<br/>
+它承担知识诊断、路径规划、个性化辅导、内容生成、测验反馈与长期记忆演化。
 
 [项目介绍](#-项目介绍) · [功能展示](#-功能展示) · [核心能力](#-核心能力) · [快速开始](#-快速开始) · [项目结构](#-项目结构) · [路线图](#-路线图)
 
@@ -20,18 +24,18 @@
 
 ## 📌 项目介绍
 
-**WeSmartFlow** 是一套面向教育场景的 Agent-native 自适应学习框架，旨在探索 AI Agent 如何从简单问答进一步深入真实学习过程。
+**WeSmartFlow** 是一套 Agent-native 自适应学习框架，探索 AI Agent 如何从简单问答深入到真实学习过程的建模与优化。
 
 ### 为什么不是又一个 AI 学习助手？
 
-大量 AI 学习类项目仍停留在"聊天助手"或"内容生成器"阶段——本质是 Chatbot + Prompt，主要能力是回答问题或生成学习材料。它们缺少对**学习过程本身**的建模，也缺少对学习状态、知识结构和反馈闭环的持续追踪。
+大量 AI 学习类项目仍停留在"聊天助手"或"内容生成器"阶段——本质是 Chatbot + Prompt，能力局限于回答问题或生成材料，缺少对**学习过程本身**的建模，也缺少对学习状态、知识结构和反馈闭环的持续追踪。
 
-WeSmartFlow 的核心价值不在于对大模型进行简单封装，而在于提供一套面向教育场景的 **Agent 工程框架**。它将 ReAct、Reflection、Graph Memory、Tool Use、Multi-Agent Collaboration 等能力结合起来，使 Agent 能够：
+WeSmartFlow 的核心价值在于提供一套面向教育场景的 **Agent 工程框架**，将 ReAct、Reflection、Graph Memory、Tool Use、Multi-Agent Collaboration 等能力有机结合，使 Agent 能够：
 
-- **理解学习目标** — 不只是回答问题，而是理解学习者当前处于什么阶段
-- **追踪学习状态** — 通过知识图谱持续记录掌握程度、概念关系和复习节奏
+- **理解学习目标** — 不只是回答问题，而是感知学习者当前所处阶段
+- **追踪学习状态** — 通过知识图谱持续记录掌握程度、概念关系与复习节奏
 - **沉淀知识资产** — 将学习行为转化为可持续演化的结构化资产
-- **在反馈中调整** — 根据测验结果和学习表现持续优化学习策略
+- **在反馈中进化** — 根据测验结果和学习表现持续优化学习策略
 
 ## 📱 功能展示
 

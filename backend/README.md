@@ -1,6 +1,8 @@
+**[English](./README_EN.md) | 中文**
+
 # WeSmartFlow Backend
 
-基于 FastAPI 的后端服务，实现教育场景的 Agent 辅导、知识图谱管理、内容生成等核心业务逻辑。
+基于 FastAPI 的后端服务，承载教育场景下的 Agent 辅导、知识图谱管理、内容生成等核心业务。
 
 ## 模块结构
 
@@ -82,7 +84,7 @@ backend/
 | Python | ≥ 3.10 | 运行时 | ✅ |
 | XeLaTeX + latexmk | TeX Live 2023+ | 编译 Beamer 知识卡片与课件 | ✅ |
 | SimplePlus Beamer 主题 | master | Beamer 课件主题 | ✅ |
-| macOS `say` + Tingting | macOS 13+ | TTS 语音讲解（非 macOS 自动降级） | 可选 |
+| macOS `say` + Tingting | macOS 13+ | TTS 语音（非 macOS 自动降级） | 可选 |
 
 ## 安装与启动
 
@@ -124,11 +126,11 @@ python main.py
 
 ## 数据库
 
-使用 SQLite（WAL 模式），数据库文件自动创建在 `backend/data/` 目录下。
+使用 SQLite（WAL 模式），数据库文件自动创建于 `backend/data/` 目录。
 
 ### 连接管理
 
-采用**统一短连接模式**，所有数据库操作通过 `with get_db() as conn` 获取短连接，执行完毕自动提交并关闭，避免长时间占用导致 `database is locked`。
+采用**统一短连接模式**：所有数据库操作通过 `with get_db() as conn` 获取短连接，执行完毕自动提交并关闭，避免长时间占用导致 `database is locked`。
 
 ## API 概览
 
