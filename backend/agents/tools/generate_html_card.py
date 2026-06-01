@@ -114,6 +114,8 @@ _KATEX_HEAD = """  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/kat
     onload="renderMathInElement(document.body, {
       delimiters: [
         {left: '$$', right: '$$', display: true},
+        {left: '\\\\[', right: '\\\\]', display: true},
+        {left: '\\\\(', right: '\\\\)', display: false},
         {left: '$', right: '$', display: false}
       ],
       throwOnError: false
