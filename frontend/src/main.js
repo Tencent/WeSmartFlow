@@ -8,6 +8,7 @@ import GitHubCallback from "./views/GitHubCallback.vue";
 import Dashboard from "./views/DashboardView.vue";
 import Graph from "./views/GraphView.vue";
 import Chat from "./views/ChatView.vue";
+import Immersive from "./views/ImmersiveView.vue";
 import Quiz from "./views/QuizView.vue";
 import DailyBrief from "./views/DailyBrief.vue";
 import Documents from "./views/DocumentsView.vue";
@@ -22,7 +23,7 @@ const routes = [
     component: GitHubCallback,
     meta: { public: true },
   },
-  { path: "/", redirect: "/dashboard" },
+  { path: "/", redirect: "/chat" },
   { path: "/dashboard", component: Dashboard },
   { path: "/graph", component: Graph },
   // /knowledge 重定向到 /graph（列表视图），保持旧链接可用，保留 query 参数
@@ -31,20 +32,13 @@ const routes = [
     redirect: (to) => ({ path: "/graph", query: to.query }),
   },
   { path: "/chat", component: Chat },
+  { path: "/immersive", component: Immersive },
   { path: "/quiz", component: Quiz },
   { path: "/sessions", component: Sessions },
   { path: "/brief", component: DailyBrief },
   { path: "/documents", component: Documents },
   { path: "/profile", component: Profile },
   { path: "/settings", component: Settings },
-  // /immersive 兼容旧链接，重定向到统一的 AI 辅导页
-  {
-    path: "/immersive",
-    redirect: (to) => ({
-      path: "/chat",
-      query: { topic: to.query.topic, mode: "immersive" },
-    }),
-  },
 ];
 
 const router = createRouter({
@@ -75,7 +69,7 @@ router.beforeEach((to) => {
   }
   // 已登录时访问登录页，跳转到首页
   if (to.path === "/login" && token) {
-    return "/dashboard";
+    return "/chat";
   }
 });
 

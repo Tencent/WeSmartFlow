@@ -121,7 +121,7 @@ class ExtractService:
         new_node_ids = []
 
         def _node_creation_hook(
-            tool_name: str, params: Dict[str, Any], result: Any
+            tool_name: str, params: Dict[str, Any], result: Any, index: int = 0
         ) -> None:
             """节点创建hook，用于准确统计新增节点"""
             if tool_name == "create_node":

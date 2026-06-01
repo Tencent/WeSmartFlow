@@ -55,7 +55,7 @@ onMounted(async () => {
   try {
     const res = await authApi.githubCallback(code);
     setAuth(res);
-    router.replace("/dashboard");
+    router.replace("/chat");
   } catch (e) {
     errorMsg.value = e.message || "GitHub 登录失败，请重试";
     loading.value = false;

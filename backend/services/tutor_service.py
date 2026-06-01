@@ -30,7 +30,8 @@ from agents.tools.update_mastery import UpdateMasteryTool
 from agents.tools.update_node import UpdateNodeTool
 from agents.tools.create_quiz import CreateQuizTool
 from agents.tools.create_node import SessionCreateNodeTool
-from agents.tools.generate_card import GenerateCardTool
+from agents.tools.generate_html_card import GenerateHtmlCardTool
+from agents.tools.generate_viz import GenerateInteractiveVizTool
 from agent_core.agent.base import (
     AgentFinalEvent,
     AgentFinishReason,
@@ -134,13 +135,12 @@ class TutorService:
                 created_at=datetime.now(timezone.utc),
             ),
         )
-        # 短连接模式下 _execute 已自动 commit，无需手动提交
 
+        # 状态累加器
         # 状态累加器（hook 与 stream 共享）
         state: Dict[str, Any] = {
             "mastery_changes": {},
-            "generated_file_ids": [],
-            "generated_files_meta": [],
+            "ordered_files": [],  # 按 index 插槽统一管理三种卡片顺序
             "created_node_ids": [],
             "created_quiz_ids": [],
         }
@@ -152,7 +152,7 @@ class TutorService:
         )
         agent = ChatAgent(
             llm=get_llm(user_id),
-            context_builder=self._make_context_builder(),
+            context_builder=self._make_context_builder(user_id),
             tool_registry=registry,
         )
 
@@ -199,6 +199,16 @@ class TutorService:
         )
         # 短连接模式下 _execute 已自动 commit，无需手动提交
 
+        # ── 异步触发画像更新（不阻塞主流程）──────────────────────
+        self._maybe_trigger_profile_update(
+            user_id=user_id,
+            session_id=session_id,
+            user_message=user_message,
+            assistant_reply=final_content,
+            state=state,
+            session=session,
+        )
+
     # ── stream_chat 的内部辅助方法 ────────────────────────
 
     def _validate_session(self, user_id: str, session_id: str) -> SessionSchema:
@@ -206,24 +216,51 @@ class TutorService:
         session = self._assert_owner(user_id, session_id)
         if not session:
             raise ValueError(f"会话 {session_id} 不存在")
-        # AI课程（completed）允许继续对话（智流Agent），其他已结束会话拒绝
-        is_immersive = (session.title or "").startswith("[AI课程]")
-        if session.status != "active" and not is_immersive:
-            raise ValueError("会话已结束")
+        # 允许所有会话继续对话（包括 completed 状态），自动重新激活
+        if session.status != "active":
+            self.session_repo.update_status(session_id, "active")
+            session.status = "active"
         return session
 
     @staticmethod
     def _make_result_hook(state: Dict[str, Any], event_queue: asyncio.Queue):
         """构造工具结果 hook：收集副作用并向 event_queue 推入业务事件。"""
 
-        def _hook(tool_name: str, params: Dict[str, Any], result: Any) -> None:
-            if tool_name == "generate_card":
+        def _hook(
+            tool_name: str, params: Dict[str, Any], result: Any, index: int = 0
+        ) -> None:
+            logger.info(
+                f"Tool {tool_name} called with params {params}, got result {result}"
+            )
+            if tool_name in ("generate_html_card", "generate_interactive_viz"):
                 if isinstance(result, str) and not result.startswith("Error"):
-                    state["generated_file_ids"].append(result)
-                    state["generated_files_meta"].append(
-                        {"file_id": result, "title": params.get("title", "")}
-                    )
-                    event_queue.put_nowait(FileCreatedEvent(file_id=result))
+                    try:
+                        # generate_html_card 返回 JSON {file_id, script}
+                        # generate_interactive_viz 返回纯 viz_id 字符串
+                        if tool_name == "generate_html_card":
+                            data = json.loads(result)
+                            file_id = data.get("file_id", "")
+                            file_type = "html"
+                        else:
+                            file_id = result.strip()
+                            file_type = "viz"
+                    except (json.JSONDecodeError, AttributeError):
+                        file_id = ""
+                        file_type = "empty"
+                    if file_id:
+                        while len(state["ordered_files"]) <= index:
+                            state["ordered_files"].append(None)
+                        file_title = params.get("title", "")
+                        state["ordered_files"][index] = {
+                            "file_id": file_id,
+                            "title": file_title,
+                            "file_type": file_type,
+                        }
+                        event_queue.put_nowait(
+                            FileCreatedEvent(
+                                file_id=file_id, title=file_title, file_type=file_type
+                            )
+                        )
 
             elif tool_name == "create_node":
                 try:
@@ -244,6 +281,27 @@ class TutorService:
                     data = json.loads(result) if isinstance(result, str) else result
                     if "quiz_id" in data:
                         state["created_quiz_ids"].append(data["quiz_id"])
+                        # 用同样的 index 插槽写入 ordered_files，保证与 html/viz 的相对顺序
+                        while len(state["ordered_files"]) <= index:
+                            state["ordered_files"].append(None)
+                        question = params.get("question", "")
+                        quiz_title = (
+                            (question[:20] + "…")
+                            if len(question) > 20
+                            else (question or "练习题")
+                        )
+                        state["ordered_files"][index] = {
+                            "file_id": data["quiz_id"],
+                            "title": quiz_title,
+                            "file_type": "quiz",
+                        }
+                        event_queue.put_nowait(
+                            FileCreatedEvent(
+                                file_id=data["quiz_id"],
+                                title=quiz_title,
+                                file_type="quiz",
+                            )
+                        )
                 except (json.JSONDecodeError, AttributeError):
                     pass
 
@@ -287,15 +345,21 @@ class TutorService:
             UpdateMasteryTool(user_id, on_result_hook=hook),
             CreateQuizTool(user_id, session_id, on_result_hook=hook),
         ]
-        # AI 主导学习不需要卡片生成（课程 PDF 由 immersive_service 管理）
-        if not is_immersive:
-            tools.append(
-                GenerateCardTool(
-                    user_id=user_id,
-                    session_id=session_id,
-                    on_result_hook=hook,
-                )
+        # HTML 卡片 / 交互可视化：交互式学习和沉浸式学习的聊天都需要
+        tools.append(
+            GenerateHtmlCardTool(
+                user_id=user_id,
+                session_id=session_id,
+                on_result_hook=hook,
             )
+        )
+        tools.append(
+            GenerateInteractiveVizTool(
+                user_id=user_id,
+                session_id=session_id,
+                on_result_hook=hook,
+            )
+        )
         tools.extend(
             [
                 # 内置网络工具（TavilySearch 注入额度 hook）
@@ -316,9 +380,34 @@ class TutorService:
         return tools
 
     @staticmethod
-    def _make_context_builder() -> SkillPromptContextBuilder:
-        """创建 Tutor Agent 的 Context Builder。"""
-        return SkillPromptContextBuilder(
+    def _make_context_builder(user_id: str = "") -> SkillPromptContextBuilder:
+        """创建 Tutor Agent 的 Context Builder（含用户画像注入）。"""
+        from config import DOCUMENTS_DIR
+        from agent_core.layout import UserDataLayout
+
+        layout = UserDataLayout(root=DOCUMENTS_DIR, user_id=user_id)
+        profile_file = layout.profile_file
+
+        # 读取用户画像，追加到 tutor prompt 之后
+        profile_text = ""
+        if profile_file.exists():
+            profile_text = profile_file.read_text(encoding="utf-8").strip()
+        # fallback: 如果用户专属画像不存在，尝试读取旧的全局画像（迁移兼容）
+        if not profile_text and user_id:
+            legacy_file = layout.profile_dir / "profile.md"
+            if legacy_file.exists():
+                profile_text = legacy_file.read_text(encoding="utf-8").strip()
+
+        class _TutorContextBuilderWithProfile(SkillPromptContextBuilder):
+            """在 SkillPromptContextBuilder 基础上追加用户画像。"""
+
+            def build_system_prompt(self, **kwargs):
+                base = super().build_system_prompt(**kwargs)
+                if profile_text:
+                    return base + "\n\n---\n\n## 用户画像\n\n" + profile_text
+                return base
+
+        return _TutorContextBuilderWithProfile(
             prompt_file=Path(__file__).parent.parent
             / "agents"
             / "prompts"
@@ -335,10 +424,7 @@ class TutorService:
     ) -> None:
         """持久化 assistant 消息、会话节点列表、会话文件列表。"""
         mastery_changes: dict[str, float] = state["mastery_changes"]
-        generated_file_ids: list[str] = state["generated_file_ids"]
-        generated_files_meta: list[dict] = state["generated_files_meta"]
         created_node_ids: list[str] = state["created_node_ids"]
-        created_quiz_ids: list[str] = state["created_quiz_ids"]
 
         # new_nodes：本轮新建的节点；node_refs：掌握度有变化的已有节点（排除新建的）
         new_nodes = created_node_ids
@@ -353,11 +439,15 @@ class TutorService:
             content=final_content,
             created_at=now,
             artifacts=MessageArtifacts(
-                files=generated_file_ids,
+                files=[
+                    f["file_id"]
+                    for f in state.get("ordered_files", [])
+                    if f is not None
+                ],
                 new_nodes=new_nodes,
                 node_refs=node_refs,
                 mastery_delta=mastery_changes,
-                quiz_ids=created_quiz_ids,
+                quiz_ids=state["created_quiz_ids"],
             ),
         )
         self.session_repo.append_message(session.id, assistant_msg)
@@ -368,19 +458,154 @@ class TutorService:
             self.session_repo.update_nodes_covered(session.id, merged)
 
         # 将本轮生成的文件追加到 SessionSchema.files
-        # 注意：AI 主导学习（immersive）的 session files 是课程章节 PDF，不应追加卡片
-        if not is_immersive:
-            for meta in generated_files_meta:
-                self.session_repo.append_session_file(
-                    session.id,
-                    SessionFile(
-                        file_id=meta["file_id"],
-                        title=meta["title"],
-                        file_type="pdf",
-                        created_at=now,
-                        from_message_id=assistant_msg_id,
-                    ),
+        # 按工具调用顺序（ordered_files）统一 append，保证 html/viz/quiz 混合排列
+        logger.info(
+            f"本轮生成文件列表（按工具调用顺序）: {state.get('ordered_files', [])}"
+        )
+        ordered_files: list[dict] = [
+            f for f in state.get("ordered_files", []) if f is not None
+        ]
+        for meta in ordered_files:
+            self.session_repo.append_session_file(
+                session.id,
+                SessionFile(
+                    file_id=meta["file_id"],
+                    title=meta["title"],
+                    file_type=meta.get("file_type", "html"),
+                    created_at=now,
+                    from_message_id=assistant_msg_id,
+                ),
+            )
+
+    # ── 画像自动更新 ─────────────────────────────────────────────
+
+    # 类级别消息计数器（session_id -> 未触发consolidate的消息数）
+    _msg_count_since_consolidate: Dict[str, int] = {}
+    # 触发阈值：累积 N 轮对话后触发一次 consolidate
+    _CONSOLIDATE_THRESHOLD = 6
+    # 有效交互关键词（检测到时立即触发）
+    _EFFECTIVE_SIGNALS = [
+        "不懂",
+        "不理解",
+        "太难",
+        "太简单",
+        "能简单点",
+        "能详细点",
+        "我之前学过",
+        "我的背景",
+        "我擅长",
+        "我不擅长",
+        "我喜欢",
+        "我讨厌",
+        "我习惯",
+        "帮我",
+        "我想学",
+        "我的目标",
+    ]
+
+    def _maybe_trigger_profile_update(
+        self,
+        user_id: str,
+        session_id: str,
+        user_message: str,
+        assistant_reply: str,
+        state: Dict[str, Any],
+        session: SessionSchema,
+    ) -> None:
+        """检测是否应触发画像更新，满足条件时异步执行 consolidate。
+
+        触发条件（满足任一即可）：
+        1. 累积消息数达到阈值（6 轮对话）
+        2. 用户消息中包含有效交互信号关键词
+        3. 本轮有 mastery_changes（说明有知识点掌握度变化）
+        """
+        # 累积计数
+        count = self._msg_count_since_consolidate.get(session_id, 0) + 1
+        self._msg_count_since_consolidate[session_id] = count
+
+        should_trigger = False
+
+        # 条件1：累积达到阈值
+        if count >= self._CONSOLIDATE_THRESHOLD:
+            should_trigger = True
+
+        # 条件2：有效交互信号
+        if not should_trigger:
+            msg_lower = user_message.lower()
+            for signal in self._EFFECTIVE_SIGNALS:
+                if signal in msg_lower:
+                    should_trigger = True
+                    break
+
+        # 条件3：有 mastery 变化
+        if not should_trigger and state.get("mastery_changes"):
+            should_trigger = True
+
+        if not should_trigger:
+            return
+
+        # 重置计数
+        self._msg_count_since_consolidate[session_id] = 0
+
+        # 异步执行 consolidate（不阻塞主流程）
+        asyncio.ensure_future(self._do_consolidate(user_id, session_id, session))
+
+    async def _do_consolidate(
+        self, user_id: str, session_id: str, session: SessionSchema
+    ) -> None:
+        """异步执行画像 consolidate，从最近对话中提取用户信息。"""
+        try:
+            from config import DOCUMENTS_DIR
+            from agent_core.layout import UserDataLayout
+            from agent_core.memory.profile import FileUserProfileStore
+
+            layout = UserDataLayout(root=DOCUMENTS_DIR, user_id=user_id)
+            layout.ensure_dirs()
+            profile_store = FileUserProfileStore(
+                profile_file=layout.profile_file,
+                history_file=layout.profile_history_file,
+            )
+
+            # 获取最近的对话消息（最多取最近 10 条）
+            detail = self.session_repo.get_detail(session_id)
+            if not detail or not detail.messages:
+                return
+
+            recent_msgs = detail.messages[-10:]
+            messages = []
+            for msg in recent_msgs:
+                role = msg.role if hasattr(msg, "role") else msg.get("role", "user")
+                content = (
+                    msg.content if hasattr(msg, "content") else msg.get("content", "")
                 )
+                messages.append({"role": role, "content": content})
+
+            # 如果是沉浸式课程，在消息前加 topic 上下文
+            is_immersive = (session.title or "").startswith("[AI课程]")
+            if is_immersive:
+                topic = (
+                    (session.topic or session.title or "")
+                    .replace("[AI课程]", "")
+                    .strip()
+                )
+                if topic:
+                    messages.insert(
+                        0,
+                        {
+                            "role": "system",
+                            "content": f"以下对话发生在用户学习「{topic}」课程的过程中。",
+                        },
+                    )
+
+            llm = get_llm(user_id)
+            success = await profile_store.consolidate(messages, llm)
+            if success:
+                logger.info("画像 consolidate 成功 (session=%s)", session_id)
+            else:
+                logger.warning("画像 consolidate 失败 (session=%s)", session_id)
+
+        except Exception:  # pylint: disable=broad-except
+            logger.exception("画像 consolidate 异常 (session=%s)", session_id)
 
     def record_duration(self, user_id: str, session_id: str, minutes: int) -> None:
         """前端离开会话页面时调用，记录本次会话的学习时长"""

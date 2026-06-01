@@ -36,7 +36,7 @@ agent_core/
 │   └── profile_skill.py # ProfileSkillBuilder (profile + skills)
 ├── llm/             # LLM adapter layer
 │   ├── base.py      #   BaseLLM abstract interface
-│   └── openai_llm.py#   OpenAI-compatible implementation
+│   └── openai_llm.py#   OpenAI-compatible implementation (supports any compatible gateway)
 ├── memory/          # Memory system
 │   └── profile.py   #   User profile memory (Profile Memory)
 ├── skills/          # Skill loader
@@ -159,6 +159,25 @@ requires:
 - Skills with missing dependencies are automatically excluded from the available list
 - `workspace/skills/` takes priority over `builtins/skills/` — users can override default behavior
 - `always: true` skills persist in the system prompt; others are loaded on demand to save tokens
+
+## LLM Adapter Layer
+
+Built on the `BaseLLM` abstract interface, with a built-in OpenAI-compatible implementation supporting:
+
+- **Streaming Output** — `async_stream_chat` returns tokens incrementally
+- **Function Calling** — Automatic tool call parsing
+- **Multi-model Switching** — Switch between models via configuration
+- **Custom Adapters** — Inherit `BaseLLM` to connect any LLM service
+
+```python
+from agent_core.llm import OpenAILLM
+
+llm = OpenAILLM(
+    api_key="sk-xxx",
+    base_url="https://api.openai.com/v1",
+    model="gpt-4o"
+)
+```
 
 ## User Profile Memory
 

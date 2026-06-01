@@ -200,6 +200,23 @@ class DocumentRepository(BaseRepository):
         )
         # 不在这里commit，让调用方控制事务
 
+    def exists_by_session_and_key(self, session_id: str, storage_key: str) -> bool:
+        """判断同一会话下指定 storage_key 的文档是否已登记，用于幂等保护。"""
+        row = self._fetchone(
+            "SELECT id FROM documents WHERE generated_from_session_id=? AND storage_key=? LIMIT 1",
+            (session_id, storage_key),
+        )
+        return row is not None
+
+    def update_node_ids_by_session_and_key(
+        self, session_id: str, storage_key: str, node_ids: list[str]
+    ) -> None:
+        """按 (session_id, storage_key) 回填节点关联，用于章节生成完成后补齐节点信息。"""
+        self._execute(
+            "UPDATE documents SET node_ids=? WHERE generated_from_session_id=? AND storage_key=?",
+            (_dumps(node_ids or []), session_id, storage_key),
+        )
+
     def delete(self, doc_id: str) -> bool:
         cursor = self._execute("DELETE FROM documents WHERE id=?", (doc_id,))
         # 不在这里commit，让调用方控制事务

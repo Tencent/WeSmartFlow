@@ -175,6 +175,39 @@ class AgentTool(BaseTool):
         return output
 
     # ------------------------------------------------------------------
+    # 流式执行
+    # ------------------------------------------------------------------
+
+    async def async_stream_run(self, input: str, context: str = "", **kwargs: Any):  # noqa: A002
+        """流式调用子 Agent，将其 async_stream 事件逐个 yield 出来。
+
+        yield 顺序：
+        1. 子 Agent 产生的所有 AgentStreamEvent（透传给父 Agent）
+        2. 最后 yield 一个 str（子 Agent 的最终答案），供父 Agent 收集为 tool result
+
+        Args:
+            input:   传递给子 Agent 的问题或指令。
+            context: 可选的额外上下文，非空时拼接在 input 之前。
+
+        Yields:
+            AgentStreamEvent | str
+        """
+        user_input = f"{context}\n\n{input}" if context else input
+
+        logger.info(
+            "[AgentTool] 流式委派任务给子 Agent '%s': %s",
+            self.name,
+            user_input[:200],
+        )
+
+        try:
+            async for event in self._agent.async_stream(user_input, **self._run_kwargs):
+                yield event
+        except Exception as e:  # pylint: disable=broad-except
+            logger.exception("[AgentTool] 子 Agent '%s' 流式运行异常", self.name)
+            yield f"Error: 子 Agent '{self.name}' 执行失败: {e}"
+
+    # ------------------------------------------------------------------
     # 表示
     # ------------------------------------------------------------------
 

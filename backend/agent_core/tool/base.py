@@ -14,8 +14,9 @@ import asyncio
 from abc import ABC, abstractmethod
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Union
 
-# hook 签名：(tool_name, params, result) -> None 或 Awaitable[None]
-ToolResultHook = Callable[[str, Dict[str, Any], Any], Union[None, Awaitable[None]]]
+# hook 签名：(tool_name, params, result, index) -> None 或 Awaitable[None]
+# index 为该工具调用在本轮 tool_calls 中的顺序（从 0 开始），用于保序处理
+ToolResultHook = Callable[[str, Dict[str, Any], Any, int], Union[None, Awaitable[None]]]
 
 
 # ============================================================
@@ -87,8 +88,9 @@ class BaseTool(ABC):
 
         Args:
             on_result_hook: 工具执行完毕后的回调，签名为
-                ``(tool_name: str, params: dict, result: Any) -> None``。
+                ``(tool_name: str, params: dict, result: Any, index: int = 0) -> None``。
                 支持普通函数和 async 函数，两种形式均可。
+                index 标识该工具调用在本轮 tool_calls 中的位置。
             before_call_hook: 工具执行前的回调（如额度检查），签名为
                 ``() -> None``。支持普通函数和 async 函数。
         """
@@ -420,6 +422,19 @@ class BaseTool(ABC):
         """
         return await asyncio.to_thread(self.run, **kwargs)
 
+    async def async_stream_run(self, **kwargs: Any):
+        """
+        异步流式执行工具，yield 文本片段或子 Agent 事件。
+
+        默认降级为调用 ``async_run()``，将结果作为单个字符串 yield。
+        AgentTool 等有真正流式能力的子类应覆写此方法。
+
+        Yields:
+            str | AgentStreamEvent
+        """
+        result = await self.async_run(**kwargs)
+        yield result if isinstance(result, str) else str(result)
+
     # ------------------------------------------------------------------
     # 便捷调用
     # ------------------------------------------------------------------
@@ -444,7 +459,7 @@ class BaseTool(ABC):
             raise ValueError(f"工具 {self.name} 参数校验失败: {'; '.join(errors)}")
         result = self.run(**casted)
         if self._on_result_hook is not None:
-            ret = self._on_result_hook(self.name, casted, result)
+            ret = self._on_result_hook(self.name, casted, result, 0)
             # 若 hook 返回了协程但当前在同步上下文，丢给事件循环执行
             if asyncio.iscoroutine(ret):
                 try:
@@ -470,10 +485,27 @@ class BaseTool(ABC):
             raise ValueError(f"工具 {self.name} 参数校验失败: {'; '.join(errors)}")
         result = await self.async_run(**casted)
         if self._on_result_hook is not None:
-            ret = self._on_result_hook(self.name, casted, result)
+            ret = self._on_result_hook(self.name, casted, result, 0)
             if asyncio.iscoroutine(ret):
                 await ret
         return result
+
+    async def async_stream_call(self, **kwargs: Any):
+        """流式执行工具，仅负责参数校验和流式输出。
+
+        注意：hook 触发（before_call_hook / on_result_hook）由调用方
+        （ToolRegistry.async_stream_execute）统一管理，此处不触发，
+        避免在并行场景下 hook 乱序执行。
+
+        Raises:
+            ValueError: 参数校验失败时抛出，由调用方捕获并转为错误响应。
+        """
+        casted = self.cast_params(kwargs)
+        errors = self.validate_params(casted)
+        if errors:
+            raise ValueError(f"工具 {self.name} 参数校验失败: {'; '.join(errors)}")
+        async for chunk in self.async_stream_run(**casted):
+            yield chunk
 
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__} name={self.name!r}>"

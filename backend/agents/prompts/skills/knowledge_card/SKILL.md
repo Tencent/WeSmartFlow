@@ -1,12 +1,12 @@
 ---
 name: knowledge_card
-description: 生成 PDF 知识卡片，用于可视化展示知识点。
+description: 生成 HTML 知识卡片，用于可视化展示知识点。
 always: true
 ---
 
 # 知识卡片生成
 
-用 `generate_card` 生成 Beamer 风格的 PDF 知识卡片（1-3 页）。
+用 `generate_html_card` 生成精美的 HTML 知识卡片（单页）。
 
 ## 核心原则
 
@@ -21,14 +21,14 @@ always: true
 
 ## 调用方式
 
-在讲解的**同时**调用（不要等讲完），一轮最多一张：
+在讲解的**同时**调用（不要等讲完），每个子概念一张：
 
 ```
-generate_card(
+generate_html_card(
   title="卡片标题",
-  content_description="详细描述卡片内容：要展示哪些要点、用什么形式（表格/公式/流程图/对比等）",
-  max_pages=2   // 1=单概念, 2=概念+示例, 3=对比或多步骤
+  content="详细描述卡片内容：要展示哪些要点、用什么形式（表格/公式/流程图/对比等）",
+  node_ids=["节点ID"]  // 可选，关联知识图谱节点
 )
 ```
 
-`content_description` 越详细，卡片质量越高。要明确说明内容和呈现形式。
+`content` 越详细，卡片质量越高。要明确说明内容和呈现形式。

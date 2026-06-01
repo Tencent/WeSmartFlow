@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any, Dict, List, Optional
@@ -127,6 +128,107 @@ class ToolRegistry:
         except Exception as e:  # pylint: disable=broad-except
             logger.exception("工具 %s 执行失败", name)
             return f"Error: 工具 {name} 执行失败: {e}" + _HINT
+
+    async def async_stream_execute(
+        self,
+        tc_id: str,
+        name: str,
+        params: Dict[str, Any],
+        step: int,
+        index: int = 0,
+    ):
+        """
+        异步流式执行工具。
+
+        - 每个 chunk 实时 yield AgentToolRunEvent（过程事件，零滞后）
+        - 所有 chunk 结束后额外 yield 一次 AgentToolResultEvent（终态标记）
+
+        Args:
+            tc_id:  tool_call id。
+            name:   工具名称。
+            params: 工具调用参数。
+            step:   当前推理步数。
+            index:  该工具调用在本轮 tool_calls 中的顺序（从 0 开始）。
+
+        Yields:
+            AgentToolRunEvent | AgentToolResultEvent
+        """
+        from ..agent.base import AgentToolRunEvent, AgentToolResultEvent
+
+        tool = self._tools.get(name)
+        if not tool:
+            yield AgentToolResultEvent(
+                id=tc_id,
+                tool_name=name,
+                arguments=params,
+                step=step,
+                result=f"Error: 未找到工具 '{name}'，可用工具: {', '.join(self.tool_names)}"
+                + _HINT,
+                index=index,
+            )
+            return
+
+        try:
+            logger.warning(
+                "[ToolRegistry] 工具 %s 收到参数 type=%s, value=%r",
+                name,
+                type(params).__name__,
+                params,
+            )
+            casted = tool.cast_params(params)
+
+            # 执行前 hook
+            if tool._before_call_hook is not None:
+                ret = tool._before_call_hook()
+                if asyncio.iscoroutine(ret):
+                    await ret
+
+            # 流式执行（validate_params 由 async_stream_call 统一处理）
+            last_chunk = None
+            async for chunk in tool.async_stream_call(**params):
+                yield AgentToolRunEvent(
+                    id=tc_id, tool_name=name, step=step, content=chunk, index=index
+                )
+                last_chunk = chunk
+
+            result = last_chunk if last_chunk is not None else ""
+
+            # 触发结果 hook
+            if tool._on_result_hook is not None:
+                ret = tool._on_result_hook(name, casted, result, index)
+                if asyncio.iscoroutine(ret):
+                    await ret
+
+            # 额外 yield ToolResultEvent 标记终态
+            yield AgentToolResultEvent(
+                id=tc_id,
+                tool_name=name,
+                arguments=casted,
+                step=step,
+                result=result,
+                index=index,
+            )
+
+        except ValueError as e:
+            # async_stream_call 内部参数校验失败会抛 ValueError
+            yield AgentToolResultEvent(
+                id=tc_id,
+                tool_name=name,
+                arguments=params,
+                step=step,
+                result=f"Error: {e}" + _HINT,
+                index=index,
+            )
+        except Exception as e:  # pylint: disable=broad-except
+            logger.exception("工具 %s 流式执行失败", name)
+            yield AgentToolResultEvent(
+                id=tc_id,
+                tool_name=name,
+                arguments=params,
+                step=step,
+                result=f"Error: 工具 {name} 执行失败: {e}" + _HINT,
+                index=index,
+            )
 
     async def async_execute(self, name: str, params: Dict[str, Any]) -> str:
         """

@@ -36,7 +36,7 @@ agent_core/
 │   └── profile_skill.py # ProfileSkillBuilder（画像 + 技能）
 ├── llm/             # LLM 适配层
 │   ├── base.py      #   BaseLLM 抽象接口
-│   └── openai_llm.py#   OpenAI 兼容实现
+│   └── openai_llm.py#   OpenAI 兼容实现（支持任意兼容网关）
 ├── memory/          # 记忆系统
 │   └── profile.py   #   用户画像记忆（Profile Memory）
 ├── skills/          # 技能加载器
@@ -159,6 +159,25 @@ requires:
 - 缺依赖的技能自动从可用列表剔除
 - `workspace/skills/` 优先于 `builtins/skills/`，用户可覆盖默认行为
 - `always: true` 常驻 system prompt，其它按需加载，节省 token
+
+## LLM 适配层
+
+基于 `BaseLLM` 抽象接口，内置 OpenAI 兼容实现，支持：
+
+- **流式输出** — `async_stream_chat` 逐 token 返回
+- **Function Calling** — 自动解析工具调用
+- **多模型切换** — 通过配置切换不同模型
+- **自定义适配** — 继承 `BaseLLM` 即可对接任意 LLM 服务
+
+```python
+from agent_core.llm import OpenAILLM
+
+llm = OpenAILLM(
+    api_key="sk-xxx",
+    base_url="https://api.openai.com/v1",
+    model="gpt-4o"
+)
+```
 
 ## 用户画像记忆
 

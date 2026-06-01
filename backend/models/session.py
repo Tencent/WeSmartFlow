@@ -44,11 +44,35 @@ class SessionFile(BaseSchema):
 
     file_id: str = Field(description="对应 documents 表的 id")
     title: str = Field(default="", description="文件标题（展示用）")
-    file_type: Literal["md", "pdf"] = Field(default="pdf")
+    file_type: Literal[
+        "md", "pdf", "audio", "json", "html", "viz", "quiz", "other", "empty"
+    ] = Field(default="pdf")
     created_at: Optional[datetime] = Field(default=None)
     from_message_id: Optional[str] = Field(
         default=None, description="哪条消息触发生成的"
     )
+
+
+class CanvasBlock(BaseSchema):
+    """沉浸式学习主内容区可渲染块。"""
+
+    id: str
+    type: Literal[
+        "outline",
+        "md",
+        "quiz_batch",
+        "explanation",
+        "knowledge_card",
+        "pdf",
+        "audio",
+        "summary",
+        "chapter_status",
+    ]
+    title: str = ""
+    status: Literal["pending", "generating", "ready", "failed"] = "ready"
+    chapter_id: Optional[int] = None
+    data: dict[str, Any] = Field(default_factory=dict)
+    error: str = ""
 
 
 class SessionSchema(BaseSchema):
@@ -59,6 +83,22 @@ class SessionSchema(BaseSchema):
         default=None, description="学习主题，有值时 Agent 在首轮预建骨架节点"
     )
     status: Literal["active", "ended", "completed"]
+    mode: Optional[Literal["chat", "immersive"]] = Field(
+        default=None, description="学习模式：普通对话或沉浸式学习"
+    )
+    stage: str = Field(
+        default="", description="沉浸式学习阶段，如 planning/partial_ready/completed"
+    )
+    canvas_blocks: list[CanvasBlock] = Field(
+        default_factory=list, description="LearningCanvas 主内容区块"
+    )
+    current_block_id: Optional[str] = Field(default=None, description="当前聚焦内容块")
+    next_actions: list[dict[str, Any]] = Field(
+        default_factory=list, description="前端可展示的下一步动作"
+    )
+    workspace: dict[str, Any] = Field(
+        default_factory=dict, description="沉浸式学习工作区状态"
+    )
     node_ids_covered: list[str] = Field(
         default_factory=list, description="本次会话涉及的所有节点"
     )

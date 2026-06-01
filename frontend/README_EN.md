@@ -14,7 +14,7 @@ frontend/
 │   └── icons.svg        #   SVG icon set
 ├── src/
 │   ├── views/           # Page views
-│   │   ├── LoginView.vue       # Login (email verification code)
+│   │   ├── LoginView.vue       # Login (email / GitHub / WeChat)
 │   │   ├── DashboardView.vue   # Today's Learning (study plan + heatmap)
 │   │   ├── ChatView.vue        # AI Tutoring (interactive + immersive)
 │   │   ├── GraphView.vue       # Knowledge graph visualization
@@ -26,6 +26,21 @@ frontend/
 │   │   ├── LearningPath.vue    # Learning path
 │   │   ├── ProfileView.vue     # User profile
 │   │   └── SettingsView.vue    # System settings
+│   ├── components/      # Reusable components
+│   │   ├── EduViz/      #   Interactive visualization sandbox
+│   │   │   ├── EduVizSandbox.vue  # iframe sandbox renderer
+│   │   │   ├── EduVizDemo.vue     # Visualization demo component
+│   │   │   ├── eduviz-sdk.js      # EduViz SDK core library
+│   │   │   └── sandboxTemplate.js # Sandbox HTML template
+│   │   ├── HtmlCard/    #   HTML knowledge card renderer
+│   │   │   └── HtmlCard.vue       # Safely renders Agent-generated HTML cards
+│   │   ├── QuizCard/    #   Quiz card
+│   │   │   └── QuizCard.vue       # Multi-type quiz interaction component
+│   │   ├── VizCard/     #   Visualization card
+│   │   │   └── VizCard.vue        # Visualization result display card
+│   │   └── chat/        #   Chat helper components
+│   │       ├── ThinkBlock.vue     # Agent thinking process display
+│   │       └── ToolCallBlock.vue  # Tool call process display
 │   ├── api/             # API client
 │   │   ├── base.js      #   Base request wrapper (with token management)
 │   │   ├── index.js     #   Unified exports
@@ -40,7 +55,6 @@ frontend/
 │   ├── composables/     # Vue composables
 │   │   ├── useAuth.js   #   Auth state management
 │   │   └── useTheme.js  #   Theme switching
-│   ├── components/      # Reusable components
 │   ├── styles/          # Global styles
 │   │   └── page-list.css#   List page common styles
 │   ├── assets/          # Build-time processed assets
@@ -93,9 +107,9 @@ npm run preview
 
 | Page             | Route        | Features                                                               |
 | ---------------- | ------------ | ---------------------------------------------------------------------- |
-| Login            | `/login`     | Email verification code login, auto-registration for new users         |
-| Today's Learning | `/`          | Personalized study plan, learning heatmap, nodes due for review        |
-| AI Tutoring      | `/chat`      | Interactive conversation learning + immersive course generation        |
+| Login            | `/login`     | Multi-method login (email / GitHub / WeChat)                           |
+| AI Tutoring      | `/chat`      | Interactive conversation learning + immersive course generation (home) |
+| Today's Learning | `/dashboard` | Personalized study plan, learning heatmap, nodes due for review        |
 | Knowledge Graph  | `/graph`     | Force-directed graph visualization, node details, mastery display      |
 | Knowledge Base   | `/knowledge` | Knowledge node list management                                         |
 | Quiz             | `/quiz`      | Multi-type quizzes (MCQ / fill-in-the-blank / true-false / open-ended) |
@@ -107,10 +121,13 @@ npm run preview
 
 ## Features
 
-- **SSE Streaming Conversations** — Real-time AI responses with Markdown + LaTeX rendering
-- **PDF Knowledge Cards** — Online preview of Agent-generated Beamer PDF slides
+- **SSE Streaming Conversations** — Real-time AI responses with Markdown + LaTeX + code highlighting
+- **HTML Knowledge Cards** — Safely renders Agent-generated interactive HTML knowledge cards (DOMPurify sanitized)
+- **EduViz Interactive Visualization** — iframe-sandboxed Agent-generated educational visualizations (algorithm demos, parameter exploration, etc.)
+- **Quiz Cards** — Inline multi-type quizzes with instant feedback and grading
 - **Immersive Learning** — Progressive multi-chapter slide presentation with audio playback
 - **Knowledge Graph Visualization** — Force-directed graph + 3D mastery display
+- **Agent Transparency** — Displays Agent thinking process and tool call details
 - **Dark Theme** — Light / dark theme switching
 - **Leave Confirmation** — Confirmation prompt when leaving during generation to prevent accidental interruption
 - **Responsive Layout** — Optimized for desktop browsers

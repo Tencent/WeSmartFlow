@@ -15,15 +15,19 @@ const SSE_DEBUG = false;
 function sseLog(type, data) {
   if (!SSE_DEBUG && !window.__SSE_DEBUG) return;
   const stylemap = {
+    think_chunk: "color:#c4b5fd",
     thinking: "color:#a78bfa",
+    tool_call_chunk: "color:#7dd3fc",
     tool_call: "color:#38bdf8",
+    tool_run: "color:#6ee7b7",
     tool_result: "color:#34d399",
+    text_chunk: "color:#cbd5e1",
+    text_reply: "color:#94a3b8",
     file_created: "color:#fb923c",
     node_created: "color:#f472b6",
     mastery_updated: "color:#facc15",
     done: "color:#4ade80;font-weight:bold",
     error: "color:#f87171;font-weight:bold",
-    text_reply: "color:#94a3b8",
   };
 
   const style = stylemap[type] || "color:#cbd5e1";
@@ -37,10 +41,14 @@ function sseLog(type, data) {
  */
 function buildSSEDispatcher(callbacks) {
   const {
-    onTextReply,
+    onThinkChunk,
     onThinking,
+    onToolCallChunk,
     onToolCall,
+    onToolRun,
     onToolResult,
+    onTextChunk,
+    onTextReply,
     onFileCreated,
     onNodeCreated,
     onMasteryUpdated,
@@ -49,10 +57,18 @@ function buildSSEDispatcher(callbacks) {
   } = callbacks;
 
   return {
-    text_reply: (d) => onTextReply?.(d.text),
+    // ── 流式分片事件 ──
+    think_chunk: (d) => onThinkChunk?.(d.delta, d.step),
+    tool_call_chunk: (d) =>
+      onToolCallChunk?.(d.index, d.id, d.tool, d.args_delta, d.step),
+    tool_run: (d) => onToolRun?.(d.id, d.tool, d.content, d.step),
+    text_chunk: (d) => onTextChunk?.(d.delta, d.step),
+    // ── 汇总事件 ──
     thinking: (d) => onThinking?.(d.content, d.step),
-    tool_call: (d) => onToolCall?.(d.tool, d.args, d.step),
-    tool_result: (d) => onToolResult?.(d.tool, d.result, d.step),
+    tool_call: (d) => onToolCall?.(d.id, d.tool, d.args, d.step),
+    tool_result: (d) => onToolResult?.(d.id, d.tool, d.args, d.result, d.step),
+    text_reply: (d) => onTextReply?.(d.text),
+    // ── 业务事件 ──
     file_created: (d) => onFileCreated?.(d.file_id),
     node_created: (d) => onNodeCreated?.(d.node_id, d.title),
     mastery_updated: (d) => onMasteryUpdated?.(d.node_id, d.delta),
@@ -121,28 +137,36 @@ export const sessionApi = {
    * 使用 fetch + ReadableStream 解析，不用 EventSource（因为需要 POST）
    *
    * SSE 事件类型（通过 data.type 区分）：
-   *   thinking      — LLM 推理步骤  { type, content, step }
-   *   tool_call     — 工具调用      { type, tool, args, step }
-   *   tool_result   — 工具结果      { type, tool, result, step }
-   *   text_reply    — 最终回复文本  { type, text }   （一次性完整文本）
-   *   done          — 回复完成      { type, mastery_changes }
-   *   file_created  — 文件生成      { type, file_id }
-   *   node_created  — 节点创建      { type, node_id, title }
-   *   mastery_updated — 掌握度更新  { type, node_id, delta }
-   *   error         — 错误          { type, message }
+   *   think_chunk     — LLM 思考文本分片（流式）  { type, delta, step }
+   *   thinking        — LLM 本轮思考汇总          { type, content, step }
+   *   tool_call_chunk — tool_call 参数分片         { type, index, id, tool, args_delta, step }
+   *   tool_call       — 工具调用完整信息           { type, id, tool, args, step }
+   *   tool_run        — 工具执行过程事件           { type, id, tool, content, step }
+   *   tool_result     — 工具最终结果               { type, id, tool, args, result, step }
+   *   text_chunk      — 最终回复文本分片（流式）   { type, delta, step }
+   *   text_reply      — 最终回复完整文本           { type, text }
+   *   done            — 回复完成                   { type, mastery_changes }
+   *   file_created    — 文件生成                   { type, file_id }
+   *   node_created    — 节点创建                   { type, node_id, title }
+   *   mastery_updated — 掌握度更新                 { type, node_id, delta }
+   *   error           — 错误                       { type, message }
    *
    * @param {string} sessionId
    * @param {string} content
    * @param {object} callbacks
-   *   onTextReply(text)                   — 收到完整的回复文本（一次性）
-   *   onThinking(content, step)           — LLM 推理步骤
-   *   onToolCall(tool, args, step)        — 工具调用开始
-   *   onToolResult(tool, result, step)    — 工具调用完成
-   *   onFileCreated(fileId)               — 文件生成完毕
-   *   onNodeCreated(nodeId, title)        — 节点创建
-   *   onMasteryUpdated(nodeId, delta)     — 掌握度更新
-   *   onDone({ mastery_changes })         — 全部完成
-   *   onError(error)                      — 出错
+   *   onThinkChunk(delta, step)              — LLM 思考文本分片（流式）
+   *   onThinking(content, step)              — LLM 本轮思考汇总
+   *   onToolCallChunk(index, id, tool, argsDelta, step) — tool_call 参数分片
+   *   onToolCall(id, tool, args, step)       — 工具调用完整信息
+   *   onToolRun(id, tool, content, step)     — 工具执行过程事件
+   *   onToolResult(id, tool, args, result, step) — 工具最终结果
+   *   onTextChunk(delta, step)               — 最终回复文本分片（流式）
+   *   onTextReply(text)                      — 最终回复完整文本（兜底）
+   *   onFileCreated(fileId)                  — 文件生成完毕
+   *   onNodeCreated(nodeId, title)           — 节点创建
+   *   onMasteryUpdated(nodeId, delta)        — 掌握度更新
+   *   onDone({ mastery_changes })            — 全部完成
+   *   onError(error)                         — 出错
    * @returns {AbortController} 用于取消请求
    */
   streamMessage: (sessionId, content, callbacks = {}) => {

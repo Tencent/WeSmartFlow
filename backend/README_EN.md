@@ -11,14 +11,18 @@ backend/
 ├── agent_core/          # General-purpose Agent core library (standalone module, see its README)
 ├── agents/              # Education-domain Agents & tools
 │   ├── chat_agent.py    #   TutorAgent (ReActAgent subclass)
-│   ├── tools/           #   7 education-domain tools
-│   │   ├── create_node.py    # Create knowledge graph node
-│   │   ├── update_node.py    # Update node information
-│   │   ├── get_node.py       # Get node details
-│   │   ├── search_nodes.py   # Search knowledge nodes
-│   │   ├── update_mastery.py # Update mastery level
-│   │   ├── generate_card.py  # Generate knowledge card (LaTeX → PDF)
-│   │   └── create_quiz.py    # Generate quiz questions
+│   ├── tools/           #   Education-domain tools
+│   │   ├── create_node.py       # Create knowledge graph node
+│   │   ├── update_node.py       # Update node information
+│   │   ├── get_node.py          # Get node details
+│   │   ├── search_nodes.py      # Search knowledge nodes
+│   │   ├── update_mastery.py    # Update mastery level
+│   │   ├── generate_card.py     # Generate knowledge card (LaTeX → PDF)
+│   │   ├── generate_html_card.py# Generate HTML interactive knowledge card
+│   │   ├── generate_viz.py      # Generate EduViz interactive visualization
+│   │   ├── validate_viz_code.py # Visualization code validation (ESLint)
+│   │   ├── viz_registry.py      # Visualization pattern registry
+│   │   └── create_quiz.py       # Generate quiz questions
 │   └── prompts/         #   Education prompts & skills
 │       ├── tutor.md     #     Tutor Agent system prompt
 │       └── skills/      #     Education skill packs
@@ -40,17 +44,23 @@ backend/
 │       ├── agents.py          #   Sub-Agent definitions
 │       ├── persistence.py     #   Persistence
 │       ├── node_extractor.py  #   Knowledge node extraction
+│       ├── profile_updater.py #   User profile update
+│       ├── suggestions.py     #   Learning suggestion generation
+│       ├── exercises.py       #   Exercise generation
+│       ├── completion.py      #   Completion calculation
 │       ├── tts.py             #   Text-to-speech
 │       ├── sse.py             #   SSE event push
 │       └── utils.py           #   Utility functions
 ├── routers/             # FastAPI route layer
-│   ├── auth.py          #   Authentication (email verification code login)
+│   ├── auth.py          #   Authentication (email / GitHub OAuth / WeChat Mini Program)
 │   ├── sessions.py      #   Learning sessions (SSE streaming)
 │   ├── immersive.py     #   Immersive learning
 │   ├── documents.py     #   Document management
 │   ├── nodes.py         #   Knowledge graph nodes
 │   ├── quiz.py          #   Quizzes
-│   ├── cards.py         #   Knowledge cards
+│   ├── cards.py         #   Knowledge cards (HTML / PDF)
+│   ├── viz.py           #   Interactive visualizations
+│   ├── llm.py           #   LLM configuration management
 │   ├── brief.py         #   Daily brief
 │   ├── settings.py      #   System settings
 │   ├── users.py         #   User info
@@ -82,8 +92,8 @@ backend/
 | Dependency | Version | Description | Required |
 |------------|---------|-------------|:--------:|
 | Python | ≥ 3.10 | Runtime | ✅ |
-| XeLaTeX + latexmk | TeX Live 2023+ | Compile Beamer knowledge cards & slides | ✅ |
-| SimplePlus Beamer Theme | master | Beamer slide theme | ✅ |
+| XeLaTeX + latexmk | TeX Live 2023+ | Compile Beamer slides (immersive mode) | Optional |
+| SimplePlus Beamer Theme | master | Beamer slide theme | Optional |
 | macOS `say` + Tingting | macOS 13+ | TTS voice (auto-degrades on non-macOS) | Optional |
 
 ## Installation & Launch
@@ -92,10 +102,10 @@ backend/
 # Install dependencies
 pip install -r requirements.txt
 
-# Install LaTeX (macOS)
+# Install LaTeX (optional, only for immersive courseware)
 brew install --cask mactex-no-gui
 
-# Download Beamer theme
+# Download Beamer theme (optional)
 git clone https://github.com/pm25/SimplePlus-BeamerTheme.git SimplePlus-BeamerTheme
 
 # Configure environment variables
@@ -110,11 +120,11 @@ python main.py
 
 | Variable | Description | Required | Example |
 |----------|-------------|:--------:|---------|
-| `OPENAI_API_KEY` | LLM API key | ✅ | `sk-xxx` |
-| `OPENAI_BASE_URL` | LLM API endpoint | ✅ | `https://api.openai.com/v1` |
+| `LLM_API_KEY` | LLM API key | ✅ | `sk-xxx` |
+| `LLM_BASE_URL` | LLM API endpoint | ✅ | `https://api.openai.com/v1` |
 | `LLM_MODEL` | Model name | ✅ | `gpt-4o` |
 | `BACKEND_HOST` | Listen address | No | `0.0.0.0` |
-| `BACKEND_PORT` | Listen port | No | `8000` |
+| `BACKEND_PORT` | Listen port | No | `8080` |
 | `CORS_ORIGINS` | CORS allowed origins | No | `http://localhost:5173` |
 | `TAVILY_API_KEY` | Web search API | No | `tvly-xxx` |
 | `IMG_API_KEY` | Image generation API | No | `sk-xxx` |
@@ -123,6 +133,14 @@ python main.py
 | `FREE_LLM_TOTAL` | Free LLM call quota | No | `100` |
 | `FREE_SEARCH_TOTAL` | Free search quota | No | `30` |
 | `FREE_IMAGE_TOTAL` | Free image generation quota | No | `15` |
+| `GITHUB_CLIENT_ID` | GitHub OAuth client ID | No | — |
+| `GITHUB_CLIENT_SECRET` | GitHub OAuth client secret | No | — |
+| `SMTP_HOST` | SMTP mail server | No | `smtp.qq.com` |
+| `SMTP_PORT` | SMTP port | No | `465` |
+| `SMTP_USER` | Sender email | No | — |
+| `SMTP_PASSWORD` | SMTP auth code | No | — |
+| `WECHAT_MP_APPID` | WeChat Mini Program AppID | No | — |
+| `WECHAT_MP_SECRET` | WeChat Mini Program secret | No | — |
 
 ## Database
 
@@ -138,13 +156,16 @@ Uses a **unified short-connection pattern**: all database operations acquire a s
 |-------------|-------------|
 | `POST /api/auth/send-code` | Send email verification code |
 | `POST /api/auth/verify-code` | Verification code login (auto-registers new users) |
+| `POST /api/auth/github` | GitHub OAuth login |
+| `POST /api/auth/wechat` | WeChat Mini Program login |
 | `GET/POST /api/sessions/...` | Learning session management |
 | `POST /api/sessions/{id}/stream` | SSE streaming conversation |
 | `POST /api/immersive/generate` | Immersive course generation |
 | `GET/POST /api/documents/...` | Document management |
 | `GET/POST /api/nodes/...` | Knowledge graph nodes |
 | `GET/POST /api/quiz/...` | Quiz generation & grading |
-| `GET /api/cards/...` | Knowledge cards |
+| `GET /api/cards/...` | Knowledge cards (HTML / PDF) |
+| `GET /api/viz/...` | Interactive visualizations |
 | `GET /api/brief/...` | Daily brief |
 | `GET/PUT /api/settings/...` | System settings |
 | `GET /api/usage` | Usage statistics |
@@ -154,9 +175,10 @@ Uses a **unified short-connection pattern**: all database operations acquire a s
 - **Web Framework**: FastAPI + uvicorn
 - **Database**: SQLite (WAL mode)
 - **Data Validation**: Pydantic v2
-- **LLM**: OpenAI-compatible protocol
-- **Content Generation**: XeLaTeX + Beamer
+- **LLM**: OpenAI-compatible protocol (supports any compatible gateway)
+- **Content Generation**: HTML Knowledge Cards · EduViz Interactive Visualization · XeLaTeX + Beamer (optional)
 - **Search**: Tavily / arXiv / DuckDuckGo
 - **Image**: OpenAI-compatible image API
 - **Document Parsing**: pdfplumber / pdfminer
 - **Streaming**: SSE (Server-Sent Events)
+- **Authentication**: GitHub OAuth · Email Verification · WeChat Mini Program · JWT

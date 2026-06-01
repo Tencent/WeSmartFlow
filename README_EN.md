@@ -10,7 +10,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](./LICENSE)
 
-🌐 [wesmartflow.cn](http://wesmartflow.cn) *(coming soon)*
+🌐 [wesmartflow.cn](http://wesmartflow.cn)
 
 **English | [中文](./README.md)**
 
@@ -40,25 +40,33 @@ WeSmartFlow's core value lies in providing an **Agent engineering framework** fo
 
 ## 📱 Screenshots
 
-### 📊 Today's Learning — Personalized Study Plan & Heatmap
+### 💬 AI Tutoring — Start Learning with Two Modes
 
-<img src="assets/dashboard.png" width="640" />
+<p align="center">
+  <img src="assets/learn.png" width="32%" />
+</p>
 
-### 💬 AI Tutoring — Start Learning
+### 💬 AI Tutoring — Free Conversation with Explanations, Interactions & Quizzes
 
-<img src="assets/learning.png" width="640" />
+<p align="center">
+  <img src="assets/card.png" width="32%" />
+  <img src="assets/viz.png" width="32%" />
+  <img src="assets/quize.png" width="32%" />
+</p>
 
-### 💬 AI Tutoring — Interactive Learning with Real-time Card Generation & Knowledge Graph Updates
+### 💬 AI Tutoring — Immersive Course with Outline, Slides & Interactive Visualization
 
-<img src="assets/interactivelearning.png" width="640" />
+<p align="center">
+  <img src="assets/大纲.png" width="32%" />
+  <img src="assets/课件.png" width="32%" />
+  <img src="assets/交互式可视化.png" width="32%" />
+</p>
 
-### 💬 AI Tutoring — Immersive Learning with One-shot Material Generation & Knowledge Node Creation
+### 🕸️ Knowledge Graph — Knowledge Structure & Mastery Details
 
-<img src="assets/immersivelearning.png" width="640" />
-
-### 🕸️ Knowledge Graph — Node Details & Mastery Levels
-
-<img src="assets/node_graph_selectone.png" width="640" />
+<p align="center">
+  <img src="assets/知识图谱.png" width="32%" />
+</p>
 
 ## 🎯 Core Capabilities
 
@@ -71,8 +79,10 @@ The tutoring Agent uses the ReAct paradigm, autonomously invoking educational to
 | Tool | Description |
 |------|-------------|
 | Knowledge Node Creation | Identifies new concepts, auto-creates graph nodes and establishes connections |
+| Knowledge Node Update | Enriches existing nodes with descriptions, tags, and relationships |
 | Mastery Update | Real-time 3D mastery updates based on conversation performance (comprehension × retention × connection) |
-| Knowledge Card Generation | XeLaTeX + Beamer compiled PDF knowledge cards |
+| HTML Knowledge Card | Generates beautifully designed interactive HTML knowledge cards |
+| Interactive Visualization | Generates interactive educational visualizations based on EduViz SDK (sandboxed) |
 | Quiz Generation | 4 question types (MCQ / fill-in-the-blank / true-false / open-ended) for instant assessment |
 | Graph Search | Searches existing knowledge nodes to avoid duplication and build connections |
 | Web Search | Tavily / arXiv / DuckDuckGo multi-source search for supplementary materials |
@@ -105,9 +115,24 @@ Input: A learning topic
 Output: Multi-chapter PDF + Audio + Exercises + Graph Nodes
 ```
 
+### 4. EduViz Interactive Visualization
+
+> Making abstract concepts **tangible and interactive**.
+
+The Agent can autonomously generate interactive visualizations based on the EduViz SDK, supporting multiple teaching patterns:
+
+- **Algorithm Step-through** — Step-by-step animated algorithm execution
+- **Formula Decomposition** — Interactive breakdown of complex formulas
+- **Parameter Exploration** — Slider-based real-time parameter tuning
+- **Geometric Construction** — Dynamic interactive geometry
+- **State Comparison** — Visual before/after state comparison
+- **Time Evolution** — Timeline animations showing change over time
+
 ## 🏗️ Architecture
 
-<img src="assets/framework.png" width="480" />
+<p align="center">
+  <img src="assets/framework.png" width="32%" />
+</p>
 
 This repository contains three layers, each with its own README:
 
@@ -125,8 +150,8 @@ This repository contains three layers, each with its own README:
 |------------|---------|-------------|:--------:|
 | [Python](https://www.python.org/) | ≥ 3.10 | Backend runtime | ✅ |
 | [Node.js](https://nodejs.org/) | ≥ 18 | Frontend build | ✅ |
-| [XeLaTeX + latexmk](https://tug.org/texlive/) | TeX Live 2023+ | Compile Beamer knowledge cards & slides | ✅ |
-| [SimplePlus Beamer Theme](https://github.com/pm25/SimplePlus-BeamerTheme) | master | Beamer slide theme | ✅ |
+| [XeLaTeX + latexmk](https://tug.org/texlive/) | TeX Live 2023+ | Compile Beamer slides (immersive mode) | Optional |
+| [SimplePlus Beamer Theme](https://github.com/pm25/SimplePlus-BeamerTheme) | master | Beamer slide theme | Optional |
 | macOS `say` + Tingting | macOS 13+ | TTS voice (auto-degrades on non-macOS) | Optional |
 
 You also need an **OpenAI-compatible API Key** (OpenAI / DeepSeek / Qwen, etc.).
@@ -136,11 +161,11 @@ You also need an **OpenAI-compatible API Key** (OpenAI / DeepSeek / Qwen, etc.).
 **1. Clone the repository and install dependencies**
 
 ```bash
-git clone https://github.com/your-org/WeSmartFlow.git
+git clone https://github.com/Tencent/WeSmartFlow.git
 cd WeSmartFlow
 
 # Recommended: use Conda for unified management
-conda env create -f environment.yml && conda activate agent
+conda env create -f environment.yml && conda activate edu-agent
 
 # Install backend dependencies
 pip install -r backend/requirements.txt
@@ -149,7 +174,7 @@ pip install -r backend/requirements.txt
 cd frontend && npm install && cd ..
 ```
 
-**2. Install LaTeX**
+**2. Install LaTeX (optional, only for immersive courseware)**
 
 ```bash
 # macOS
@@ -163,7 +188,7 @@ sudo apt install texlive-xetex texlive-latex-extra texlive-fonts-extra \
 xelatex --version && latexmk --version
 ```
 
-**3. Download Beamer Theme**
+**3. Download Beamer Theme (optional)**
 
 ```bash
 git clone https://github.com/pm25/SimplePlus-BeamerTheme.git backend/SimplePlus-BeamerTheme
@@ -179,11 +204,13 @@ Edit `backend/.env`, fill in at minimum:
 
 | Variable | Description | Required |
 |----------|-------------|:--------:|
-| `OPENAI_API_KEY` | LLM API key | ✅ |
-| `OPENAI_BASE_URL` | LLM API endpoint | ✅ |
+| `LLM_API_KEY` | LLM API key | ✅ |
+| `LLM_BASE_URL` | LLM API endpoint | ✅ |
 | `LLM_MODEL` | Model name | ✅ |
 | `TAVILY_API_KEY` | Web search API | Optional |
 | `IMG_API_KEY` | Image generation API | Optional |
+| `GITHUB_CLIENT_ID` | GitHub OAuth login | Optional |
+| `SMTP_HOST` / `SMTP_USER` | Email verification login | Optional |
 
 > Full environment variable documentation in [Backend README](./backend/README_EN.md#environment-variables)
 
@@ -208,30 +235,42 @@ WeSmartFlow/
 │   │   ├── agent/           #   Reasoning paradigms: ReAct / Reflection / Plan-and-Solve
 │   │   ├── tool/            #   Tool system: @tool / BaseTool / MCP / Agent-as-Tool
 │   │   ├── skills/          #   Markdown declarative skill loader
-│   │   ├── context/         #   Context builder
+│   │   ├── context/         #   Context builder (Profile + Skill Prompt)
 │   │   ├── memory/          #   User profile memory
-│   │   ├── llm/             #   LLM adapter layer
+│   │   ├── llm/             #   LLM adapter layer (OpenAI-compatible)
 │   │   └── builtins/        #   Built-in skills & tools
 │   ├── agents/              # Education-domain Agents & tools
+│   │   ├── tools/           #   Educational tools (Graph / Card / Viz / Quiz)
+│   │   └── prompts/         #   Agent prompts & skill definitions
 │   ├── services/            # Business service layer
+│   │   └── immersive/       #   Immersive course service (Multi-Agent)
 │   ├── routers/             # FastAPI routes
 │   ├── repositories/        # Data access layer
 │   ├── models/              # Pydantic data models
 │   └── main.py              # Application entry point
 ├── frontend/
 │   ├── src/
-│   │   ├── views/           # Page views
-│   │   ├── api/             # API client (with SSE)
+│   │   ├── views/           # Page views (Chat / Immersive / Graph / Quiz / ...)
+│   │   ├── components/      # Reusable components
+│   │   │   ├── EduViz/      #   Interactive visualization sandbox
+│   │   │   ├── HtmlCard/    #   HTML knowledge card renderer
+│   │   │   ├── QuizCard/    #   Quiz card
+│   │   │   └── VizCard/     #   Visualization card
+│   │   ├── api/             # API client (with SSE streaming)
 │   │   └── composables/     # Vue composables
 │   └── package.json
 ├── environment.yml          # Conda environment definition
-└── README.md                # This file (product documentation)
+└── README.md                # This file
 ```
 
 ## 🗺️ Roadmap
 
 | Status | Direction | Description |
 |:------:|-----------|-------------|
+| ✅ | **Interactive Visualization** | EduViz SDK sandboxed educational visualizations |
+| ✅ | **Multiple Login Methods** | GitHub OAuth · Email verification · WeChat Mini Program |
+| ✅ | **HTML Knowledge Cards** | Replacing LaTeX cards with lighter, more beautiful HTML |
+| ✅ | **Usage Quota Management** | Free tier control (LLM / Search / Image) |
 | 🎯 | **Agent Benchmark** | Build evaluation system around educational tasks |
 | 🎯 | **Reflection & Adjustment** | Reflect on learning performance and quiz results |
 | 🎯 | **More Reasoning Paradigms** | Tree-of-Thought · LATS · Custom paradigms |
@@ -248,14 +287,15 @@ WeSmartFlow/
 
 | Layer | Technologies |
 |-------|-------------|
-| Frontend | Vue 3 · Vue Router 4 · Vite 8 · pdfjs-dist · marked · KaTeX · pdf-lib |
-| Backend | FastAPI · SQLite (WAL) · SSE-Starlette · Pydantic · uvicorn |
+| Frontend | Vue 3 · Vue Router 4 · Vite 8 · pdfjs-dist · marked · KaTeX · DOMPurify · pdf-lib |
+| Backend | FastAPI · SQLite (WAL) · SSE-Starlette · Pydantic · uvicorn · tiktoken |
 | Agent Core | `agent_core` (custom) · ReAct / Reflection / Plan-and-Solve · `@tool` · Agent-as-Tool · MCP |
-| LLM | OpenAI-compatible protocol (replaceable with any compatible gateway) |
-| Content Generation | XeLaTeX + Beamer (SimplePlus) · macOS `say` (Tingting) |
+| LLM | OpenAI-compatible protocol (supports any compatible gateway) |
+| Content Generation | HTML Knowledge Cards · EduViz Interactive Viz · XeLaTeX + Beamer (SimplePlus) · macOS `say` (Tingting) |
 | Search | Tavily · arXiv · DuckDuckGo |
 | Image | OpenAI-compatible image API |
 | Document Parsing | pdfplumber · pdfminer |
+| Authentication | GitHub OAuth · Email Verification · WeChat Mini Program · JWT |
 
 ## 📄 License
 

@@ -319,7 +319,11 @@
               </div>
             </div>
             <div class="about-links">
-              <a class="btn btn-ghost btn-sm" href="#" target="_blank">
+              <a
+                class="btn btn-ghost btn-sm"
+                href="https://github.com/Tencent/WeSmartFlow"
+                target="_blank"
+              >
                 <svg
                   width="12"
                   height="12"

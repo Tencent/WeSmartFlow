@@ -24,14 +24,8 @@ def create_access_token(user_id: str) -> str:
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
-def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-) -> str:
-    """
-    FastAPI 依赖：从 Authorization: Bearer <token> 中解析出 user_id。
-    验证失败抛出 401。
-    """
-    token = credentials.credentials
+def decode_access_token(token: str) -> str:
+    """解析 JWT token，返回 user_id；验证失败抛出 401。"""
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
         user_id: str = payload.get("sub")
@@ -51,3 +45,13 @@ def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="无效的 Token",
         )
+
+
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+) -> str:
+    """
+    FastAPI 依赖：从 Authorization: Bearer <token> 中解析出 user_id。
+    验证失败抛出 401。
+    """
+    return decode_access_token(credentials.credentials)

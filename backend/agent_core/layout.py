@@ -127,31 +127,55 @@ class CourseLayout:
 
         处理两类常见问题：
         1. 非法控制字符：LLM 在 JSON 字符串值中混入 raw \\n \\r 等
-        2. 非法反斜杠转义：LLM 输出 \\数、\\微 等非 JSON 合法转义序列，
+        2. 非法反斜杠转义：LLM 输出 LaTeX 命令如 \\to, \\infty, \\text 等，
            导致 json.loads 报 "Invalid \\escape" 错误。
            JSON 合法转义仅有：\\" \\\\ \\/ \\b \\f \\n \\r \\t \\uXXXX
+        3. LaTeX 伪合法转义：\\to, \\text, \\nabla, \\rightarrow 等以合法
+           转义字符开头但实际是 LaTeX 命令的情况。
         """
         import re
 
         # 第一步：移除 JSON 字符串值内的 raw 控制字符（\x00-\x08, \x0a-\x1f 除 \x09）
         # 保留 \t (0x09) 因为它虽需转义但 Python json 解析器能容忍
         cleaned = re.sub(r"[\x00-\x08\x0a-\x1f]", "", raw)
-        # 第二步：修复非法反斜杠转义
+
+        # 第二步：修复非法反斜杠转义（基础）
         # 将 \ 后面不是合法 JSON 转义字符的情况，把 \ 替换为 \\（双反斜杠）
         # 合法转义字符：" \ / b f n r t u
         cleaned = re.sub(r'\\(?!["\\/bfnrtu])', r"\\\\", cleaned)
+
+        # 第三步：修复 LaTeX "伪合法" 转义
+        # \t, \n, \r, \b, \f 在 JSON 中是合法转义（制表符、换行等），
+        # 但如果后面紧跟字母，则很可能是 LaTeX 命令（如 \to, \text, \nabla, \rightarrow, \frac, \binom）
+        # 将这些情况也替换为双反斜杠
+        cleaned = re.sub(r"\\([tnrbf])(?=[a-zA-Z])", r"\\\\\1", cleaned)
+
         return cleaned
+
+    @staticmethod
+    def _safe_json_loads(raw: str) -> Any:
+        """尝试解析 JSON，失败时用激进策略修复后重试。"""
+        sanitized = CourseLayout._sanitize_json(raw)
+        try:
+            return json.loads(sanitized)
+        except json.JSONDecodeError:
+            # 激进策略：将所有非双反斜杠的单反斜杠都转义
+            # 先把已有的 \\ 替换为占位符，再把剩余的 \ 替换为 \\，最后恢复占位符
+            placeholder = "\x00BACKSLASH\x00"
+            aggressive = sanitized.replace("\\\\", placeholder)
+            aggressive = aggressive.replace("\\", "\\\\")
+            aggressive = aggressive.replace(placeholder, "\\\\")
+            return json.loads(aggressive)
 
     def load_outline(self) -> Optional[Dict[str, Any]]:
         """加载课程大纲，文件不存在返回 None。
 
-        自动清洗 LLM 输出中可能包含的非法 JSON 控制字符。
+        自动清洗 LLM 输出中可能包含的非法 JSON 控制字符和 LaTeX 转义。
         """
         if not self.outline_file.exists():
             return None
         raw = self.outline_file.read_text(encoding="utf-8")
-        sanitized = self._sanitize_json(raw)
-        return json.loads(sanitized)
+        return self._safe_json_loads(raw)
 
     # ---- 研究资料读写 ----
 
@@ -169,14 +193,13 @@ class CourseLayout:
     def load_research(self, chapter_id: int) -> Optional[Dict[str, Any]]:
         """加载章节研究资料，文件不存在返回 None。
 
-        自动清洗 LLM 输出中可能包含的非法 JSON 控制字符。
+        自动清洗 LLM 输出中可能包含的非法 JSON 控制字符和 LaTeX 转义。
         """
         path = self.research_file(chapter_id)
         if not path.exists():
             return None
         raw = path.read_text(encoding="utf-8")
-        sanitized = self._sanitize_json(raw)
-        return json.loads(sanitized)
+        return self._safe_json_loads(raw)
 
     # ---- 目录创建 ----
 
@@ -201,13 +224,18 @@ class UserDataLayout:
     """用户数据目录布局。
 
     一个实例对应一个用户的数据根目录，所有路径在初始化时一次性计算好。
+    通过 user_id 参数实现用户画像数据隔离：
+    - profile_{user_id}.md
+    - history_{user_id}.md
+    - mastery_{user_id}.json
 
     Args:
         root: 用户数据根目录路径。
+        user_id: 用户 ID，用于画像文件隔离。为空时使用不带后缀的文件名（兼容旧逻辑）。
 
     Example::
 
-        layout = UserDataLayout(root=Path("./data/users/user_001"))
+        layout = UserDataLayout(root=Path("./data/documents"), user_id="u_abc123")
         layout.ensure_dirs()
 
         # 各模块使用 layout 获取路径
@@ -221,6 +249,7 @@ class UserDataLayout:
     """
 
     root: Path
+    user_id: str = ""
 
     def __post_init__(self) -> None:
         self.root = Path(self.root).resolve()
@@ -228,10 +257,19 @@ class UserDataLayout:
         # ---- Agent 自我定义 ----
         self.identity_file: Path = self.root / "agent.md"
 
-        # ---- 用户画像 ----
+        # ---- 用户画像（按 user_id 隔离） ----
         self.profile_dir: Path = self.root / "profile"
-        self.profile_file: Path = self.profile_dir / "profile.md"
-        self.profile_history_file: Path = self.profile_dir / "history.md"
+        if self.user_id:
+            self.profile_file: Path = self.profile_dir / f"profile_{self.user_id}.md"
+            self.profile_history_file: Path = (
+                self.profile_dir / f"history_{self.user_id}.md"
+            )
+            self.mastery_file: Path = self.profile_dir / f"mastery_{self.user_id}.json"
+        else:
+            # 兼容旧逻辑（无 user_id 时使用原始文件名）
+            self.profile_file: Path = self.profile_dir / "profile.md"
+            self.profile_history_file: Path = self.profile_dir / "history.md"
+            self.mastery_file: Path = self.profile_dir / "mastery.json"
 
         # ---- 用户自定义技能 ----
         self.skills_dir: Path = self.root / "skills"
@@ -279,4 +317,4 @@ class UserDataLayout:
         self.courses_dir.mkdir(parents=True, exist_ok=True)
 
     def __repr__(self) -> str:
-        return f"UserDataLayout(root={self.root})"
+        return f"UserDataLayout(root={self.root}, user_id={self.user_id})"

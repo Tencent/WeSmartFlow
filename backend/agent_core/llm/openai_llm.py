@@ -11,11 +11,19 @@ from __future__ import annotations
 import os
 import random
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from openai import AsyncOpenAI, OpenAI
 
-from .base import BaseLLM, LLMResponse, ToolCallRequest
+from .base import (
+    BaseLLM,
+    LLMResponse,
+    StreamChunkEvent,
+    ToolCallDeltaEvent,
+    StreamFinishEvent,
+    StreamEvent,
+    ToolCallRequest,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -302,9 +310,143 @@ class OpenAILLM(BaseLLM):
             content="Error: unknown", finish_reason="error", metadata={"error": True}
         )
 
+    async def stream_think(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Any] = None,
+        config: Optional[Dict[str, Any]] = None,
+    ) -> AsyncGenerator[StreamEvent, None]:
+        """流式调用 OpenAI API，逐 chunk yield StreamChunkEvent，结束后 yield StreamFinishEvent。"""
+        import json_repair
 
-# ---------------------------------------------------------------------------
-# 手动测试入口
+        await self._async_fire_before_call()
+        merged_config = {**self.default_config, **(config or {})}
+        kw = self._build_kwargs(messages, tools, tool_choice, merged_config)
+        kw["stream"] = True
+        # stream_options 仅标准 OpenAI API 支持，兼容端点可能不支持，按需开启
+        if not self.base_url or "openai.com" in (self.base_url or ""):
+            kw["stream_options"] = {"include_usage": True}
+
+        accumulated = ""
+        finish_reason = "stop"
+        usage: Dict[str, int] = {}
+        # tool_calls 按 index 累积：{index: {"id": ..., "name": ..., "arguments": ...}}
+        tool_calls_buf: Dict[int, Dict[str, Any]] = {}
+
+        async def _accum_tc(tc_delta: Any, idx_hint: int) -> None:
+            """将单个 tool_call delta 累积进 tool_calls_buf，并 yield ToolCallDeltaEvent。"""
+            # index 优先从对象本身取，fallback 到枚举 idx
+            idx: int = getattr(tc_delta, "index", None)
+            if idx is None:
+                idx = idx_hint
+
+            # 兼容部分 LLM（如 aihubmix 代理）index 全部返回 0 的 bug：
+            # 当新 chunk 携带了非空 id，且与当前 buf 里已有的 id 不同时，
+            # 说明这是一个新的 tool_call，自动分配下一个可用 index。
+            if (
+                tc_delta.id
+                and idx in tool_calls_buf
+                and tool_calls_buf[idx]["id"]
+                and tool_calls_buf[idx]["id"] != tc_delta.id
+            ):
+                idx = max(tool_calls_buf.keys()) + 1
+
+            buf = tool_calls_buf.setdefault(
+                idx, {"id": "", "name": "", "arguments": ""}
+            )
+            if tc_delta.id:
+                buf["id"] = tc_delta.id
+            fn = tc_delta.function
+            arguments_delta = ""
+            if fn:
+                # name 不会分片，直接覆盖
+                if fn.name:
+                    buf["name"] = fn.name
+                # arguments 是分片下发的，需要拼接
+                if fn.arguments:
+                    arguments_delta = fn.arguments
+                    buf["arguments"] += fn.arguments
+            yield ToolCallDeltaEvent(
+                index=idx,
+                id=buf["id"],
+                name=buf["name"],
+                arguments_delta=arguments_delta,
+                arguments_so_far=buf["arguments"],
+            )
+
+        try:
+            client = self._make_async_client()
+            stream = await client.chat.completions.create(**kw)
+            async for chunk in stream:
+                # usage 只在最后一个 chunk 里
+                if hasattr(chunk, "usage") and chunk.usage:
+                    usage = {
+                        "prompt_tokens": chunk.usage.prompt_tokens,
+                        "completion_tokens": chunk.usage.completion_tokens,
+                        "total_tokens": chunk.usage.total_tokens,
+                    }
+                if not chunk.choices:
+                    continue
+                choice = chunk.choices[0]
+                if choice.finish_reason:
+                    finish_reason = choice.finish_reason
+
+                delta = choice.delta
+                if not delta:
+                    continue
+
+                # 累积文本内容
+                if delta.content:
+                    accumulated += delta.content
+                    yield StreamChunkEvent(delta=delta.content, content=accumulated)
+
+                # 累积 tool_calls，同时 yield 分片事件
+                for enum_idx, tc_delta in enumerate(delta.tool_calls or []):
+                    async for tc_event in _accum_tc(tc_delta, enum_idx):
+                        yield tc_event
+
+        except Exception as exc:  # pylint: disable=broad-except
+            yield StreamFinishEvent(
+                response=LLMResponse(
+                    content=accumulated,
+                    finish_reason="error",
+                    metadata={
+                        "error": True,
+                        "error_message": str(exc),
+                        "model": self.model_name,
+                    },
+                )
+            )
+            return
+
+        # 将累积的 tool_calls_buf 解析为 ToolCallRequest 列表
+        tool_calls: List[ToolCallRequest] = []
+        for i in sorted(tool_calls_buf):
+            buf = tool_calls_buf[i]
+            parsed_args = (
+                json_repair.loads(buf["arguments"]) if buf["arguments"] else {}
+            )
+            tool_calls.append(
+                ToolCallRequest(
+                    id=buf["id"],
+                    name=buf["name"],
+                    arguments=parsed_args,
+                    index=i,
+                )
+            )
+
+        yield StreamFinishEvent(
+            response=LLMResponse(
+                content=accumulated,
+                tool_calls=tool_calls,
+                finish_reason=finish_reason,
+                usage=usage,
+                metadata={"model": self.model_name},
+            )
+        )
+
+
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
@@ -397,12 +539,110 @@ if __name__ == "__main__":
         else:
             print("  ❌ 既无 tool_calls 也无 content")
 
+    # ── 测试4：stream_think 纯文本流式 ───────────────────────────
+    async def test_stream_text():
+        print("\n" + "=" * 60)
+        print("测试4：stream_think() 纯文本流式")
+        print("=" * 60)
+        llm = OpenAILLM()
+        messages = [
+            {"role": "system", "content": "你是一个有帮助的助手，请简洁回答。"},
+            {"role": "user", "content": "用三句话介绍一下 Python。"},
+        ]
+        chunk_count = 0
+        finish_event = None
+        async for event in llm.stream_think(messages):
+            if isinstance(event, StreamChunkEvent):
+                chunk_count += 1
+                print(f"  [chunk {chunk_count}] delta={event.delta!r}")
+            elif isinstance(event, StreamFinishEvent):
+                finish_event = event
+        print(f"\n  ✅ 共收到 {chunk_count} 个 chunk")
+        print(f"  finish_reason : {finish_event.response.finish_reason}")
+        print(f"  usage         : {finish_event.response.usage}")
+        print(f"  完整内容      : {finish_event.response.content}")
+        print(f"  is_error      : {finish_event.is_error}")
+        if finish_event.is_error:
+            print(
+                f"  ❌ 错误信息   : {finish_event.response.metadata.get('error_message')}"
+            )
+
+    # ── 测试5：stream_think tool_calls 流式累积 ──────────────────
+    async def test_stream_tool_calls():
+        print("\n" + "=" * 60)
+        print("测试5：stream_think() tool_calls 流式累积")
+        print("=" * 60)
+        llm = OpenAILLM()
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "description": "获取指定城市的天气信息",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "city": {"type": "string", "description": "城市名称"},
+                            "unit": {
+                                "type": "string",
+                                "enum": ["celsius", "fahrenheit"],
+                            },
+                        },
+                        "required": ["city"],
+                    },
+                },
+            }
+        ]
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "你是一个有帮助的助手。当用户询问多个城市的天气时，"
+                    "必须同时并行调用多次 get_weather 函数，每个城市调用一次，不要分批。"
+                ),
+            },
+            {"role": "user", "content": "北京、上海、深圳，今天的天气分别怎么样？"},
+        ]
+        finish_event = None
+        async for event in llm.stream_think(
+            messages,
+            tools=tools,
+            tool_choice="auto",
+            config={"parallel_tool_calls": True},
+        ):
+            if isinstance(event, StreamChunkEvent):
+                print(f"  [text] delta={event.delta!r}")
+            elif isinstance(event, ToolCallDeltaEvent):
+                # 首个分片：有 name 但 arguments_delta 为空
+                if event.name and not event.arguments_delta:
+                    print(
+                        f"  [tc:{event.index}] 开始调用 {event.name!r}  id={event.id!r}"
+                    )
+                elif event.arguments_delta:
+                    print(f"  [tc:{event.index}] args_delta={event.arguments_delta!r}")
+            elif isinstance(event, StreamFinishEvent):
+                finish_event = event
+        resp = finish_event.response
+        print(f"  finish_reason : {resp.finish_reason}")
+        if resp.is_error:
+            print(f"  ❌ 错误信息   : {resp.metadata.get('error_message')}")
+        elif resp.has_tool_calls:
+            print(f"  ✅ 流式累积到 {len(resp.tool_calls)} 个 tool_call:")
+            for tc in resp.tool_calls:
+                print(f"     id       : {tc.id}")
+                print(f"     函数名   : {tc.name}")
+                print(f"     参数     : {tc.arguments}")
+        else:
+            print(f"  ⚠️  无 tool_calls，模型直接回复: {resp.content[:200]}")
+
     async def run_async_tests():
-        await test_async()
+        # await test_async()
+        # await test_stream_text()
+        await test_stream_tool_calls()
 
     try:
-        test_sync()
-        test_function_calling()
+        # test_sync()
+        # test_function_calling()
         asyncio.run(run_async_tests())
     except Exception as e:  # pylint: disable=broad-except
         import traceback

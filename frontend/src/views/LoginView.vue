@@ -228,7 +228,7 @@ async function handleEmailLogin() {
   try {
     const res = await authApi.verifyCode(email.value, verifyCode.value);
     setAuth(res);
-    router.replace("/dashboard");
+    router.replace("/chat");
   } catch (e) {
     errorMsg.value = e.message || "验证失败，请重试";
   } finally {

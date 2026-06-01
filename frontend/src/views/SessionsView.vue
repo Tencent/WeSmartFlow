@@ -132,8 +132,24 @@
                     ? s.duration_minutes + " 分钟"
                     : "时长未记录"
                 }}</span>
-                <span class="session-dot">·</span>
-                <span>{{ s.message_count }} 条消息</span>
+                <template v-if="s.isImmersive && s.plannedChapters > 0">
+                  <span class="session-dot">·</span>
+                  <span
+                    :style="{
+                      color: s.canResume ? 'var(--yellow)' : 'var(--green)',
+                      fontWeight: 600,
+                    }"
+                  >
+                    已生成 {{ s.generatedChapters }}/{{
+                      s.plannedChapters
+                    }}
+                    章{{ s.canResume ? "（可续传）" : "" }}
+                  </span>
+                </template>
+                <template v-else>
+                  <span class="session-dot">·</span>
+                  <span>{{ s.message_count }} 条消息</span>
+                </template>
                 <template v-if="s.fileCount > 0">
                   <span class="session-dot">·</span>
                   <span>{{ s.fileCount }} 份文档</span>
@@ -236,7 +252,7 @@
               :key="f.file_id"
               class="slide-item"
               style="cursor: pointer"
-              @click="$router.push('/documents')"
+              @click="openFile(f)"
             >
               <svg
                 width="13"
@@ -271,7 +287,33 @@
 
         <!-- Actions -->
         <div class="detail-actions">
-          <button class="btn btn-ghost" style="flex: 1" @click="resumeSession">
+          <!-- 沉浸式 + 未完成：续传生成 -->
+          <button
+            v-if="activeSession.canResume"
+            class="btn btn-primary"
+            style="flex: 1"
+            @click="continueGenerate"
+          >
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <polygon points="5 3 19 12 5 21 5 3" />
+            </svg>
+            继续生成（{{ activeSession.generatedChapters }}/{{
+              activeSession.plannedChapters
+            }}）
+          </button>
+          <button
+            v-else
+            class="btn btn-ghost"
+            style="flex: 1"
+            @click="resumeSession"
+          >
             <svg
               width="13"
               height="13"
@@ -340,16 +382,27 @@ async function loadSessions() {
     ]);
     // 建立节点 id -> title 映射
     nodeMap.value = Object.fromEntries(nodes.map((n) => [n.id, n.title]));
-    sessions.value = raw.map((s) => ({
-      ...s,
-      isImmersive: (s.title || "").startsWith("[AI课程]"),
-      displayTitle: (s.title || "").startsWith("[AI课程]")
-        ? s.title.replace("[AI课程] ", "")
-        : s.topic || s.title || "未命名会话",
-      started_at: s.created_at,
-      new_node_ids: s.node_ids_covered || [],
-      fileCount: (s.files || []).length,
-    }));
+    sessions.value = raw.map((s) => {
+      const isImmersive = (s.title || "").startsWith("[AI课程]");
+      const ws = s.workspace || {};
+      const generated = ws.generated_chapters ?? 0;
+      const planned = ws.planned_chapters ?? 0;
+      // 是否可以续传：沉浸式 + 大纲已规划 + 还有未完成章节
+      const canResume = isImmersive && planned > 0 && generated < planned;
+      return {
+        ...s,
+        isImmersive,
+        displayTitle: isImmersive
+          ? s.title.replace("[AI课程] ", "")
+          : s.topic || s.title || "未命名会话",
+        started_at: s.created_at,
+        new_node_ids: s.node_ids_covered || [],
+        fileCount: (s.files || []).length,
+        generatedChapters: generated,
+        plannedChapters: planned,
+        canResume,
+      };
+    });
     if (sessions.value.length > 0) {
       activeSession.value = sessions.value[0];
     }
@@ -419,10 +472,33 @@ function formatGroupDate(iso) {
 
 function resumeSession() {
   if (activeSession.value) {
+    const path = activeSession.value.isImmersive ? "/immersive" : "/chat";
     router.push({
-      path: "/chat",
+      path,
       query: { session_id: activeSession.value.id },
     });
+  }
+}
+
+// 沉浸式课程未生成完，续传剩余章节
+function continueGenerate() {
+  if (!activeSession.value) return;
+  router.push({
+    path: "/immersive",
+    query: { session_id: activeSession.value.id, resume: "1" },
+  });
+}
+
+function openFile(f) {
+  console.log("openFile", f);
+  if (activeSession.value?.isImmersive) {
+    // 沉浸式会话的文档直接进入immersive页面恢复会话
+    router.push({
+      path: "/immersive",
+      query: { session_id: activeSession.value.id },
+    });
+  } else {
+    router.push("/documents");
   }
 }
 </script>

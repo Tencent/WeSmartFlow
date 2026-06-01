@@ -8,9 +8,14 @@ from dotenv import load_dotenv
 
 # 尝试加载 .env 文件（可选，没有 dotenv 也不崩）
 
-env_file = Path(__file__).parent.parent / ".env"
+env_file = Path(__file__).parent / ".env"
 if env_file.exists():
     load_dotenv(env_file)
+else:
+    # fallback: 项目根目录
+    _root_env = Path(__file__).parent.parent / ".env"
+    if _root_env.exists():
+        load_dotenv(_root_env)
 
 
 # 项目根目录（支持通过环境变量 ROOT_DIR 配置，默认为 backend/ 的父目录）
@@ -22,12 +27,16 @@ DOCUMENTS_DIR = DATA_DIR / "documents"
 UPLOADS_DIR = DOCUMENTS_DIR / "uploads"
 CARDS_DIR = DOCUMENTS_DIR / "cards"
 COURSES_DIR = DOCUMENTS_DIR / "courses"
+VIZ_DIR = DOCUMENTS_DIR / "viz"
 SESSIONS_DIR = DATA_DIR / "sessions"
 
 # 默认指向 SimplePlus-BeamerTheme 主题目录
 TEX_TEMPLATE_DIR = Path(
     os.getenv("TEX_TEMPLATE_DIR", str(Path(__file__).parent / "SimplePlus-BeamerTheme"))
 )
+
+# 日志目录
+LOG_DIR = DATA_DIR / "logs"
 
 # SQLite 数据库
 DB_PATH = DATA_DIR / "wesmartflow.db"
@@ -62,7 +71,9 @@ GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET", "")
 # 服务配置
 BACKEND_HOST = os.getenv("BACKEND_HOST", "0.0.0.0")
 BACKEND_PORT = int(os.getenv("BACKEND_PORT", "8080"))
-CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
+CORS_ORIGINS = os.getenv(
+    "CORS_ORIGINS", "http://localhost:5174,http://localhost:5173"
+).split(",")
 
 # 文件上传限制
 MAX_UPLOAD_SIZE_MB = 50
@@ -75,6 +86,8 @@ for _dir in [
     UPLOADS_DIR,
     CARDS_DIR,
     COURSES_DIR,
+    VIZ_DIR,
     SESSIONS_DIR,
+    LOG_DIR,
 ]:
     _dir.mkdir(parents=True, exist_ok=True)

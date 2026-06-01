@@ -485,7 +485,7 @@ class FileUserProfileStore(UserProfileStore):
             self.append_history(history_entry)
 
             self._consecutive_failures = 0
-            logger.info("Profile consolidation done for {} messages", len(messages))
+            logger.info("Profile consolidation done for %s messages", len(messages))
             return True
 
         except Exception:  # pylint: disable=broad-except

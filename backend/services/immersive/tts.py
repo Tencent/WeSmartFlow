@@ -60,7 +60,21 @@ def generate_speaker_notes(llm: BaseLLM, tex_path: Path, num_pages: int) -> List
     try:
         match = re.search(r"\[[\s\S]*\]", response.content)
         if match:
-            notes = json.loads(match.group())
+            text = match.group()
+            try:
+                notes = json.loads(text)
+            except json.JSONDecodeError:
+                # LLM 经常把 LaTeX 命令直接塞进字符串（\frac \nu \theta 等），
+                # 这些反斜杠在 JSON 里要么非法、要么被当作合法转义吞掉。
+                # 这里把"\后跟≥2 个连续字母"的序列翻倍，让 \frac/\nu/\lambda
+                # 在解析后仍是字面 \frac/\nu/\lambda，不会被误读为 \f/\n + 字母。
+                protected = re.sub(r"(?<!\\)\\([A-Za-z]{2,})", r"\\\\\1", text)
+                try:
+                    notes = json.loads(protected)
+                except json.JSONDecodeError:
+                    # 兜底：再叠加非法转义反斜杠通配翻倍
+                    fixed = re.sub(r'\\(?!["\\/bfnrtu])', r"\\\\", protected)
+                    notes = json.loads(fixed)
             if isinstance(notes, list):
                 return [str(n) for n in notes]
     except Exception as e:  # pylint: disable=broad-except

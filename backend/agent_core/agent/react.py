@@ -7,22 +7,26 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
 from ..context.base import BaseContextBuilder
 from ..context.simple import SimpleContextBuilder
-from ..llm.base import BaseLLM
+from ..llm.base import BaseLLM, StreamChunkEvent, ToolCallDeltaEvent, StreamFinishEvent
 from ..tool.registry import ToolRegistry
 from .base import (
     AgentFinishReason,
     AgentFinalEvent,
     AgentResult,
     AgentStreamEvent,
+    AgentThinkChunkEvent,
     AgentThinkEvent,
+    AgentToolCallChunkEvent,
     AgentToolCallEvent,
     AgentToolResultEvent,
     BaseAgent,
+    extract_event_text,
 )
 
 logger = logging.getLogger(__name__)
@@ -183,12 +187,20 @@ class ReActAgent(BaseAgent):
                     history=history,
                 )
 
-            # 执行所有工具调用（顺序执行，保持与同步版一致的语义）
-            for tc in response.tool_calls:
-                logger.debug("[ReAct-Async] Action: %s(%s)", tc.name, tc.arguments)
-                result = await self.tool_registry.async_execute(tc.name, tc.arguments)
+            # 并行执行所有工具调用
+            async def _exec(tc_item: Any) -> Tuple[Any, str]:
+                res = await self.tool_registry.async_execute(
+                    tc_item.name, tc_item.arguments
+                )
+                return tc_item, res
+
+            pairs = await asyncio.gather(*[_exec(tc) for tc in response.tool_calls])
+
+            # 按原始顺序写入 history
+            for tc, result in pairs:
                 logger.debug(
-                    "[ReAct-Async] Observation: %s",
+                    "[ReAct-Async] Observation[%s]: %s",
+                    tc.name,
                     result[:300] if isinstance(result, str) else result,
                 )
                 self.context_builder.add_tool_result(history, tc.id, tc.name, result)
@@ -256,7 +268,8 @@ class ReActAgent(BaseAgent):
         """异步流式推理，每个关键节点 yield 一个事件。
 
         事件类型（按发生顺序）：
-        - AgentThinkEvent      — LLM 返回了思考内容（含 Thought 文本）
+        - AgentThinkChunkEvent — LLM 思考文本的实时分片（流式）
+        - AgentThinkEvent      — 本轮思考完成汇总（含完整 Thought 文本）
         - AgentToolCallEvent   — 即将调用某个工具
         - AgentToolResultEvent — 工具执行完毕
         - AgentFinalEvent      — 最终回复（推理结束）
@@ -276,10 +289,49 @@ class ReActAgent(BaseAgent):
         for step in range(1, self.max_steps + 1):
             logger.debug("[ReAct-Stream] ── step %d ──", step)
 
-            response = await self.async_think(messages, tools=tools)
+            # 使用 stream_think 实时流出文本
+            response = None
+            async for event in self.llm.stream_think(
+                messages,
+                tools=tools,
+                tool_choice="auto" if tools else None,
+                config=self.llm_config,
+            ):
+                if isinstance(event, StreamChunkEvent):
+                    yield AgentThinkChunkEvent(
+                        delta=event.delta,
+                        content=event.content,
+                        step=step,
+                    )
+                elif isinstance(event, ToolCallDeltaEvent):
+                    yield AgentToolCallChunkEvent(
+                        index=event.index,
+                        id=event.id,
+                        tool_name=event.name,
+                        arguments_delta=event.arguments_delta,
+                        arguments_so_far=event.arguments_so_far,
+                        step=step,
+                    )
+                elif isinstance(event, StreamFinishEvent):
+                    response = event.response
 
-            # yield 思考内容（即使为空字符串也 yield，让调用方感知到 LLM 已响应）
+            # stream_think 异常时 response 可能为 None
+            if response is None or response.is_error:
+                error_msg = (
+                    response.metadata.get("error_message", "未知错误")
+                    if response
+                    else "流式调用异常"
+                )
+                logger.error("[ReAct-Stream] LLM 错误: %s", error_msg)
+                yield AgentFinalEvent(
+                    content=f"[Error] {error_msg}",
+                    finish_reason=AgentFinishReason.ERROR,
+                )
+                return
+
+            # 本轮思考完成，yield 汇总事件
             if response.content:
+                logger.debug("[ReAct-Stream] Thought: %s", response.content)
                 yield AgentThinkEvent(content=response.content, step=step)
 
             self.context_builder.add_assistant_message(history, response)
@@ -293,33 +345,72 @@ class ReActAgent(BaseAgent):
                 )
                 return
 
-            # 逐个执行工具调用
+            # 并行执行所有工具调用，先 yield 所有 AgentToolCallEvent
             for tc in response.tool_calls:
                 yield AgentToolCallEvent(
+                    id=tc.id,
                     tool_name=tc.name,
                     arguments=tc.arguments,
                     step=step,
+                    index=tc.index,
                 )
                 logger.debug("[ReAct-Stream] Action: %s(%s)", tc.name, tc.arguments)
 
-                result = await self.tool_registry.async_execute(tc.name, tc.arguments)
+            # 并行流式执行：用 Queue 汇聚多个生成器的事件
+            # queue 中放 AgentToolRunEvent / AgentToolResultEvent，或 None 表示某个工具完成
+            _DONE = object()  # 哨兵
+            queue: asyncio.Queue = asyncio.Queue()
+
+            # 本轮起始 index = 当前累积调用总数，本轮结束后加上本轮工具数
+            round_start = self.llm.tool_call_count
+
+            async def _run_tool(tc_item: Any, tc_index: int) -> None:
+                """在独立 task 中流式执行单个工具，结果推入 queue。"""
+                async for run_event in self.tool_registry.async_stream_execute(
+                    tc_item.id, tc_item.name, tc_item.arguments, step, tc_index
+                ):
+                    await queue.put(run_event)
+                await queue.put(_DONE)
+
+            # 启动所有工具 task，全局 index = round_start + tc.index
+            tasks = [
+                asyncio.create_task(_run_tool(tc, round_start + tc.index))
+                for tc in response.tool_calls
+            ]
+            pending = len(tasks)
+
+            # 按到达顺序消费事件，同时收集每个工具的最终结果
+            results: Dict[str, Any] = {}
+            while pending > 0:
+                item = await queue.get()
+                if item is _DONE:
+                    pending -= 1
+                    continue
+                yield item
+                # AgentToolResultEvent 携带完整 result，直接记录
+                if isinstance(item, AgentToolResultEvent):
+                    results[item.id] = item.result  # str 或 AgentStreamEvent
+
+            # 等待所有 task 正常退出（异常已在 _run_tool 内部处理）
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+            # 本轮工具调用结束，累积调用总数
+            self.llm.tool_call_count += len(response.tool_calls)
+
+            # 按原始顺序写入 history，保证 LLM 上下文顺序一致
+            for tc in response.tool_calls:
+                result = results.get(tc.id, "")
+                result_str = extract_event_text(result)
                 logger.debug(
-                    "[ReAct-Stream] Observation: %s",
-                    result[:300] if isinstance(result, str) else result,
+                    "[ReAct-Stream] Observation[%s]: %s", tc.name, result_str[:300]
                 )
 
-                yield AgentToolResultEvent(
-                    tool_name=tc.name,
-                    arguments=tc.arguments,
-                    result=result if isinstance(result, str) else str(result),
-                    step=step,
+                self.context_builder.add_tool_result(
+                    history, tc.id, tc.name, result_str
                 )
-
-                self.context_builder.add_tool_result(history, tc.id, tc.name, result)
                 await self._async_on_tool_result(
-                    tc.name, tc.arguments, result, history, **kwargs
+                    tc.name, tc.arguments, result_str, history, **kwargs
                 )
-
             messages = self.context_builder.build_messages(history, **kwargs)
 
         logger.warning("[ReAct-Stream] 达到最大步数 %d，强制结束", self.max_steps)

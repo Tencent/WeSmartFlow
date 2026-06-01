@@ -24,6 +24,17 @@ async def generate_quiz(
         raise HTTPException(404, str(e))
 
 
+@router.get("/{quiz_id}")
+async def get_quiz(
+    quiz_id: str,
+    user_id: str = Depends(get_current_user),
+):
+    try:
+        return QuizService().get_quiz(user_id, quiz_id)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+
+
 @router.post("/{quiz_id}/submit")
 async def submit_quiz(
     quiz_id: str,

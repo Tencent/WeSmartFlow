@@ -4,12 +4,13 @@ FastAPI 应用入口
 """
 
 import logging
+import logging.handlers
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from config import BACKEND_HOST, BACKEND_PORT, CORS_ORIGINS, DATA_DIR
+from config import BACKEND_HOST, BACKEND_PORT, CORS_ORIGINS, DATA_DIR, LOG_DIR
 from database import init_db
 from routers.nodes import router as nodes_router
 from routers.sessions import router as sessions_router
@@ -20,15 +21,43 @@ from routers.brief import router as brief_router
 from routers.immersive import router as immersive_router
 from routers.settings import router as settings_router
 from routers.auth import router as auth_router
-from routers.cards import router as cards_router
+from routers.cards import router as cards_router, gen_router as cards_gen_router
 from routers.usage import router as usage_router
+from routers.viz import router as viz_router
+from routers.llm import router as llm_router
 
 from services.quota import QuotaExceededError
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
-)
+# --------------------------------------------------------------------------
+# 日志配置：控制台 + 按天轮转文件
+# --------------------------------------------------------------------------
+
+_LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s - %(message)s"
+_LOG_LEVEL = logging.INFO
+
+# 根 logger（防止 reload 模式下重复添加 handler）
+_root_logger = logging.getLogger()
+_root_logger.setLevel(_LOG_LEVEL)
+
+if not _root_logger.handlers:
+    # 控制台 Handler
+    _console_handler = logging.StreamHandler()
+    _console_handler.setLevel(_LOG_LEVEL)
+    _console_handler.setFormatter(logging.Formatter(_LOG_FORMAT))
+    _root_logger.addHandler(_console_handler)
+
+    # 文件 Handler：按天轮转，保留 30 天，UTF-8 编码
+    _file_handler = logging.handlers.TimedRotatingFileHandler(
+        filename=str(LOG_DIR / "app.log"),
+        when="midnight",  # 每天午夜轮转
+        interval=1,  # 每 1 天
+        backupCount=30,  # 保留最近 30 天的日志
+        encoding="utf-8",
+    )
+    _file_handler.suffix = "%Y-%m-%d"  # 轮转后文件名后缀：app.log.2026-06-01
+    _file_handler.setLevel(_LOG_LEVEL)
+    _file_handler.setFormatter(logging.Formatter(_LOG_FORMAT))
+    _root_logger.addHandler(_file_handler)
 
 # --------------------------------------------------------------------------
 # 应用初始化
@@ -62,7 +91,10 @@ app.include_router(brief_router)
 app.include_router(settings_router)
 app.include_router(immersive_router)
 app.include_router(cards_router)
+app.include_router(cards_gen_router)
 app.include_router(usage_router)
+app.include_router(viz_router)
+app.include_router(llm_router)
 
 # --------------------------------------------------------------------------
 # 全局异常处理：额度超限返回 429
@@ -95,7 +127,16 @@ _assets_dir.mkdir(parents=True, exist_ok=True)
 @app.on_event("startup")
 def on_startup():
     init_db()
-    logging.getLogger(__name__).info("WeSmartFlow 后端已启动，数据库初始化完成")
+    log = logging.getLogger(__name__)
+    log.info("WeSmartFlow 后端已启动，数据库初始化完成")
+
+    # 清理 data/documents/courses 下的孤儿课程目录（无 outline.json 或无对应 session）
+    try:
+        from services.immersive.persistence import cleanup_orphan_course_dirs
+
+        cleanup_orphan_course_dirs()
+    except Exception as exc:  # pylint: disable=broad-except
+        log.warning("启动时清理孤儿课程目录失败: %s", exc)
 
 
 @app.get("/health")

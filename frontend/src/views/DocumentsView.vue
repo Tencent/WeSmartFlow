@@ -416,7 +416,71 @@
           </button>
         </div>
         <div class="modal-body" style="overflow-y: auto; flex: 1">
-          <div v-if="documentContent" class="document-content">
+          <!-- 加载中 -->
+          <div v-if="loadingContent" class="loading-content">
+            <div class="loading-spinner" />
+            <div>正在加载文档内容...</div>
+          </div>
+
+          <!-- HTML 卡片类型：复用 HtmlCard 组件 -->
+          <div
+            v-else-if="selectedDoc?.type === 'html'"
+            class="doc-preview-html"
+          >
+            <HtmlCard :file-id="selectedDoc.id + '/card.html'" />
+          </div>
+
+          <!-- Viz 可视化类型：复用 VizCard 沙盒渲染 -->
+          <div v-else-if="selectedDoc?.type === 'viz'" class="doc-preview-viz">
+            <VizCard :viz-id="selectedDoc.id" :title="selectedDoc.name" />
+          </div>
+
+          <!-- PDF 类型：pdf.js 渲染 -->
+          <div v-else-if="selectedDoc?.type === 'pdf'" class="doc-preview-pdf">
+            <div v-if="pdfState.totalPages > 0" class="pdf-viewer">
+              <div class="pdf-toolbar">
+                <button
+                  class="btn btn-ghost btn-sm"
+                  :disabled="pdfState.currentPage <= 1"
+                  @click="pdfPrevPage"
+                >
+                  ← 上一页
+                </button>
+                <span class="pdf-page-info"
+                  >{{ pdfState.currentPage }} / {{ pdfState.totalPages }}</span
+                >
+                <button
+                  class="btn btn-ghost btn-sm"
+                  :disabled="pdfState.currentPage >= pdfState.totalPages"
+                  @click="pdfNextPage"
+                >
+                  下一页 →
+                </button>
+              </div>
+              <div class="pdf-canvas-wrap">
+                <canvas ref="pdfCanvasRef" class="pdf-canvas" />
+              </div>
+            </div>
+            <div v-else class="no-content">PDF 加载失败</div>
+          </div>
+
+          <!-- Markdown 类型：渲染为 HTML -->
+          <div
+            v-else-if="
+              selectedDoc?.type === 'md' || selectedDoc?.type === 'markdown'
+            "
+            class="doc-preview-md"
+          >
+            <div
+              v-if="documentContent"
+              class="markdown-body"
+              v-html="renderMd(documentContent.content || '')"
+            ></div>
+            <div v-else class="no-content">无法加载文档内容</div>
+          </div>
+
+          <!-- 其他类型（txt / docx 等）：分段纯文本展示 -->
+          <div v-else-if="documentContent" class="document-content">
             <div
               v-for="segment in documentContent.segments"
               :key="segment.segment_id"
@@ -430,10 +494,8 @@
               </div>
             </div>
           </div>
-          <div v-else-if="loadingContent" class="loading-content">
-            <div class="loading-spinner" />
-            <div>正在加载文档内容...</div>
-          </div>
+
+          <!-- 兜底：无内容 -->
           <div v-else class="no-content">无法加载文档内容</div>
         </div>
         <div class="modal-footer">
@@ -721,9 +783,13 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from "vue";
+import { ref, computed, onMounted, nextTick } from "vue";
 import { documentApi, nodeApi } from "@/api";
-import { api } from "@/api/base.js";
+import { api, BASE_URL, authHeaders } from "@/api/base.js";
+import { HtmlCard } from "@/components/HtmlCard";
+import { VizCard } from "@/components/VizCard";
+import { renderMd } from "@/composables/useMarkdown.js";
+import * as pdfjsLib from "pdfjs-dist/webpack.mjs";
 
 const searchQuery = ref("");
 const activeFilter = ref("all");
@@ -797,12 +863,47 @@ async function viewNodes(doc) {
 }
 
 // 查看文档内容
+const pdfCanvasRef = ref(null);
+const pdfState = ref({ currentPage: 1, totalPages: 0 });
+let pdfDoc = null;
+
 async function viewContent(doc) {
   selectedDoc.value = doc;
   showContentModal.value = true;
   loadingContent.value = true;
   documentContent.value = null;
+  pdfDoc = null;
+  pdfState.value = { currentPage: 1, totalPages: 0 };
 
+  // html 和 viz 类型不需要加载文本内容，直接用组件渲染
+  if (doc.type === "html" || doc.type === "viz") {
+    loadingContent.value = false;
+    return;
+  }
+
+  // pdf 类型：用 pdf.js 渲染
+  if (doc.type === "pdf") {
+    try {
+      const pdfUrl = `${BASE_URL}/api/documents/${doc.id}/download`;
+      const pdfDocument = await pdfjsLib.getDocument({
+        url: pdfUrl,
+        httpHeaders: authHeaders(),
+        cMapUrl: "https://unpkg.com/pdfjs-dist@5.6.205/cmaps/",
+        cMapPacked: true,
+      }).promise;
+      pdfDoc = pdfDocument;
+      pdfState.value = { currentPage: 1, totalPages: pdfDocument.numPages };
+      loadingContent.value = false;
+      await nextTick();
+      await renderPdfPage(1);
+    } catch (e) {
+      console.warn("PDF 加载失败:", e.message);
+      loadingContent.value = false;
+    }
+    return;
+  }
+
+  // md / txt / docx 等：加载文本内容
   try {
     const content = await documentApi.getContent(doc.id);
     documentContent.value = content;
@@ -811,6 +912,30 @@ async function viewContent(doc) {
   } finally {
     loadingContent.value = false;
   }
+}
+
+async function renderPdfPage(pageNum) {
+  if (!pdfDoc || !pdfCanvasRef.value) return;
+  const page = await pdfDoc.getPage(pageNum);
+  const scale = 1.5;
+  const viewport = page.getViewport({ scale });
+  const canvas = pdfCanvasRef.value;
+  const ctx = canvas.getContext("2d");
+  canvas.width = viewport.width;
+  canvas.height = viewport.height;
+  await page.render({ canvasContext: ctx, viewport }).promise;
+}
+
+function pdfPrevPage() {
+  if (pdfState.value.currentPage <= 1) return;
+  pdfState.value.currentPage--;
+  renderPdfPage(pdfState.value.currentPage);
+}
+
+function pdfNextPage() {
+  if (pdfState.value.currentPage >= pdfState.value.totalPages) return;
+  pdfState.value.currentPage++;
+  renderPdfPage(pdfState.value.currentPage);
 }
 
 // 下载文档（带鉴权）
@@ -1511,6 +1636,126 @@ async function addNodeToDocument() {
   display: flex;
   flex-direction: column;
   gap: 20px;
+}
+
+/* HTML 卡片预览 */
+.doc-preview-html {
+  width: 100%;
+  height: 60vh;
+  position: relative;
+}
+
+/* Viz 可视化预览 */
+.doc-preview-viz {
+  width: 100%;
+  height: 60vh;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+/* PDF 预览 */
+.doc-preview-pdf {
+  width: 100%;
+}
+.pdf-viewer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+.pdf-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  position: sticky;
+  top: 0;
+  background: var(--bg-card);
+  z-index: 1;
+  width: 100%;
+  justify-content: center;
+}
+.pdf-page-info {
+  font-size: 13px;
+  color: var(--text-secondary);
+  min-width: 60px;
+  text-align: center;
+}
+.pdf-canvas-wrap {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  overflow: auto;
+}
+.pdf-canvas {
+  max-width: 100%;
+  height: auto;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  border-radius: 4px;
+}
+
+/* Markdown 预览 */
+.doc-preview-md {
+  padding: 16px;
+}
+.markdown-body {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text-primary);
+}
+.markdown-body :deep(h1),
+.markdown-body :deep(h2),
+.markdown-body :deep(h3),
+.markdown-body :deep(h4) {
+  margin-top: 1.2em;
+  margin-bottom: 0.6em;
+  font-weight: 600;
+}
+.markdown-body :deep(p) {
+  margin-bottom: 0.8em;
+}
+.markdown-body :deep(code) {
+  background: var(--bg-hover);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.9em;
+}
+.markdown-body :deep(pre) {
+  background: var(--bg-hover);
+  padding: 12px 16px;
+  border-radius: var(--radius-md);
+  overflow-x: auto;
+  margin-bottom: 1em;
+}
+.markdown-body :deep(pre code) {
+  background: none;
+  padding: 0;
+}
+.markdown-body :deep(ul),
+.markdown-body :deep(ol) {
+  padding-left: 1.5em;
+  margin-bottom: 0.8em;
+}
+.markdown-body :deep(blockquote) {
+  border-left: 3px solid var(--brand);
+  padding-left: 12px;
+  color: var(--text-secondary);
+  margin: 0.8em 0;
+}
+.markdown-body :deep(table) {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 1em;
+}
+.markdown-body :deep(th),
+.markdown-body :deep(td) {
+  border: 1px solid var(--border);
+  padding: 8px 12px;
+  text-align: left;
+}
+.markdown-body :deep(th) {
+  background: var(--bg-hover);
+  font-weight: 600;
 }
 .content-segment {
   border: 1px solid var(--border);

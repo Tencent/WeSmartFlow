@@ -21,13 +21,12 @@ from agent_core.tool import (
     WriteFileTool,
 )
 from config import TEX_TEMPLATE_DIR
-from services.quota import check_and_consume
 
 logger = logging.getLogger(__name__)
 
 
 def build_image_tool(user_id, before_call_hook=None):
-    """构建 OpenAI 兼容图像生成工具实例。"""
+    """构建图像生成工具实例（OpenAI 兼容接口）。"""
     try:
         from database import get_setting
 
@@ -43,6 +42,7 @@ def build_image_tool(user_id, before_call_hook=None):
         api_key = os.getenv("IMG_API_KEY", "any")
         base_url = os.getenv("IMG_BASE_URL", "http://localhost:8080/v1")
         model = os.getenv("IMG_MODEL") or None
+    logger.info("沉浸式学习：使用 OpenAI 兼容图片生成接口")
     return OpenAIImageGenTool(
         api_key=api_key,
         base_url=base_url,
@@ -55,23 +55,27 @@ def build_sub_agents(layout: UserDataLayout, user_id) -> Dict[str, ReActAgent]:
     """构建 4 个独立子 Agent。"""
     from database import get_setting
     from services.llm_factory import get_llm
+    from agent_core.memory.profile import FileUserProfileStore
 
     tavily_key = get_setting(user_id, "tavily_api_key") or os.getenv(
         "TAVILY_API_KEY", ""
     )
 
-    # 搜索工具额度 hook
-    def _search_hook():
-        check_and_consume(user_id, "search")
+    # 沉浸式学习不走"免费 100 次"额度限制：LLM / 搜索 / 图像 hook 均置空
+    _search_hook = None
+    _image_hook = None
 
-    # 图像生成工具额度 hook
-    def _image_hook():
-        check_and_consume(user_id, "image")
+    # 构建按 user_id 隔离的 profile_store
+    profile_store = FileUserProfileStore(
+        profile_file=layout.profile_file,
+        history_file=layout.profile_history_file,
+    )
 
     planner = ReActAgent(
         llm=get_llm(user_id),
         context_builder=ContextBuilderWithProfileAndSkill(
             workspace_dir=layout.root,
+            profile_store=profile_store,
             base_prompt=(
                 "你是一个专业的课程规划师。根据用户的学习主题，"
                 "规划一份循序渐进的课程大纲。\n\n"
@@ -103,11 +107,24 @@ def build_sub_agents(layout: UserDataLayout, user_id) -> Dict[str, ReActAgent]:
     researcher = ReActAgent(
         llm=get_llm(user_id),
         context_builder=SimpleContextBuilder(
-            "你是信息检索助手。根据章节信息搜索资料，整理为 JSON 写入指定路径。\n"
-            'JSON 格式：{"chapter_id": N, "chapter_title": "...",\n'
-            '  "sources": [{"title": "...", "url": "...", "summary": "..."}],\n'
-            '  "raw_text": "整合后参考资料（2000字内）"}\n'
-            "要求：优先中文资料，保留关键知识点和公式，标注来源 URL。"
+            "你是信息检索与整理助手。根据章节信息检索资料，整理为 JSON 写入指定路径。\n\n"
+            "**JSON 输出格式**：\n"
+            '{"chapter_id": N, "chapter_title": "...",\n'
+            '  "sources": [{"title": "标题", "url": "https://...", "summary": "一句话摘要"}],\n'
+            '  "raw_text": "整合后的 Markdown 正文（不超过 2000 字）"}\n\n'
+            "**raw_text 必须遵守的格式规范**（前端会以 Markdown 直接渲染，质量直接影响用户体验）：\n"
+            "1. 必须使用 Markdown 结构：用 `### 小节标题` 分块，每块下用短段落 + 列表，避免出现整段大段文字。\n"
+            "2. 严禁出现裸 URL；若需引用网址，**必须**写成 `[显示文本](https://...)` 的 markdown 链接形式。\n"
+            "3. 数学公式使用 LaTeX：行内用 `$...$`，独立公式用 `$$...$$`。\n"
+            "4. 重要术语和关键概念用 `**加粗**`，对易混淆点可用 `> 引用块` 提醒。\n"
+            "5. 不要把 sources 里的链接列表再原样附在 raw_text 末尾（前端会单独展示）。\n"
+            "6. 内容要求循序渐进：先给定义/直观解释，再给关键性质/算法步骤，最后给注意事项或常见误区。\n"
+            "7. 优先使用中文资料；如果只有英文，请翻译为中文表达。\n\n"
+            "**工作流程**：\n"
+            "1. 用 search 工具检索 2-4 条权威资料\n"
+            "2. （可选）对最相关的 1-2 条用 web_fetch 抓取详细内容\n"
+            "3. 整合为符合上述规范的 raw_text，并将 sources 列表填好\n"
+            "4. 用 write_file 写入指定的 research.json 路径"
         ),
         tool_registry=ToolRegistry(
             [
@@ -124,6 +141,7 @@ def build_sub_agents(layout: UserDataLayout, user_id) -> Dict[str, ReActAgent]:
         llm=get_llm(user_id),
         context_builder=ContextBuilderWithProfileAndSkill(
             workspace_dir=layout.root,
+            profile_store=profile_store,
             base_prompt=(
                 "你是 LaTeX Beamer 讲义设计师。根据章节信息，从文件系统读取参考资料，生成教学插图，撰写 TeX 源码，编译为 PDF。\n"
                 "严格遵循 tex_beamer_writing 技能中的所有格式规范和文件系统协议。"
@@ -144,10 +162,33 @@ def build_sub_agents(layout: UserDataLayout, user_id) -> Dict[str, ReActAgent]:
         llm=get_llm(user_id),
         context_builder=ContextBuilderWithProfileAndSkill(
             workspace_dir=layout.root,
+            profile_store=profile_store,
             base_prompt=(
-                "你是教育习题设计师。读取 TeX 讲义，生成 8-12 道配套习题写入 .md 文件。\n"
-                "题型多样（选择题、填空题、简答题），难度由易到难。\n"
-                "每道题后附带答案和解析，用 <details> 标签折叠。"
+                "你是教育习题设计师。读取 TeX 讲义，生成**恰好 9 道单选题**写入 .md 文件。\n"
+                "题目必须按难度分为 3 组：3 道简单 + 3 道中等 + 3 道困难，且按此顺序排列。\n"
+                "每题 4 个选项 A/B/C/D，必须有正确答案与解析。\n\n"
+                "**严格输出格式**（整个文件必须完全遵循，不要添加任何额外内容）：\n"
+                "```\n"
+                "### 第1题 [简单]\n"
+                "**题干：** 这里写题目内容\n\n"
+                "A. 选项A内容\n"
+                "B. 选项B内容\n"
+                "C. 选项C内容\n"
+                "D. 选项D内容\n\n"
+                "**答案：** A\n"
+                "**解析：** 这里写解析内容（一段话即可，不要分行列表）\n\n"
+                "### 第2题 [简单]\n"
+                "...（重复上述结构）\n"
+                "```\n\n"
+                "**强制要求**：\n"
+                "- 必须恰好 9 道题，标题严格按 `### 第N题 [难度]` 格式，N 从 1 到 9\n"
+                "- 难度标签必须是中括号包裹的 `[简单]` / `[中等]` / `[困难]` 三选一\n"
+                "- 第 1-3 题为 [简单]，第 4-6 题为 [中等]，第 7-9 题为 [困难]\n"
+                "- 题干、答案、解析行必须以 `**xxx：**` 加粗冒号开头\n"
+                "- 不要使用 <details>、<summary>、HTML 标签\n"
+                "- 不要生成填空题/简答题/判断题，只能是 4 选 1 的单选\n"
+                "- 答案行只写字母 A / B / C / D，不要写成 'A. xxx'\n"
+                "- 解析必须是连续文本，不要列表/分点，确保前端单行渲染美观"
             ),
         ),
         tool_registry=ToolRegistry([ReadFileTool(), WriteFileTool()]),

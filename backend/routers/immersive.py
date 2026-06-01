@@ -2,9 +2,12 @@
 沉浸式学习（AI主导学习）路由
 
 提供：
-  POST /api/immersive/generate   — SSE 流式生成课件（核心接口）
-  GET  /api/immersive/files/*    — 静态文件服务（PDF/图片/音频）
-  GET  /api/immersive/courses    — 列出已生成的课程
+  POST /api/immersive/generate            — SSE 流式生成课件（核心接口）
+  POST /api/immersive/resume              — 断点续传（恢复生成）
+  GET  /api/immersive/exercises/:sid/:cid  — 获取结构化习题数据
+  POST /api/immersive/complete             — 用户确认完成学习
+  GET  /api/immersive/files/*             — 静态文件服务（PDF/图片/音频）
+  GET  /api/immersive/courses             — 列出已生成的课程
 """
 
 from __future__ import annotations
@@ -17,10 +20,16 @@ from fastapi import APIRouter, HTTPException, Request, Depends
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
-from services.immersive import immersive_generate
+from services.immersive import (
+    immersive_generate,
+    immersive_resume,
+    get_exercises_for_chapter,
+    complete_immersive_session,
+)
 from config import COURSES_DIR
 from dependencies import get_current_user
 from services.quota import QuotaExceededError
+from services.content_guard import get_content_guard
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +41,8 @@ router = APIRouter(prefix="/api/immersive", tags=["immersive"])
 class GenerateRequest(BaseModel):
     topic: str
     user_profile: Optional[str] = ""
+    enable_audio: bool = False
+    enable_exercises: bool = True
 
 
 # ── 权属校验辅助 ─────────────────────────────────────────────────
@@ -82,12 +93,25 @@ async def generate_immersive(
     if not req.topic.strip():
         raise HTTPException(status_code=400, detail="topic 不能为空")
 
+    # ── 内容安全审核（输入） ──
+    guard = get_content_guard()
+    if guard.enabled:
+        guard_result = await guard.check_input(req.topic.strip())
+        if not guard_result.is_safe:
+            guard.log_violation(user_id, req.topic, guard_result)
+            raise HTTPException(
+                status_code=400,
+                detail=guard_result.reason,
+            )
+
     async def event_stream():
         try:
             async for event in immersive_generate(
                 topic=req.topic.strip(),
                 user_profile=req.user_profile or "",
                 user_id=user_id,
+                enable_audio=req.enable_audio,
+                enable_exercises=req.enable_exercises,
             ):
                 # 检查客户端是否断开
                 if await request.is_disconnected():
@@ -118,6 +142,159 @@ async def generate_immersive(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+# ── 断点续传 ───────────────────────────────────────────────────
+
+
+class ResumeRequest(BaseModel):
+    session_id: str
+
+
+@router.post("/resume")
+async def resume_immersive(
+    req: ResumeRequest, request: Request, user_id: str = Depends(get_current_user)
+):
+    """SSE 流式恢复生成（断点续传）。
+
+    从中断处继续生成尚未完成的章节，复用已有大纲和 course_dir。
+    """
+    if not req.session_id.strip():
+        raise HTTPException(status_code=400, detail="session_id 不能为空")
+
+    async def event_stream():
+        try:
+            async for event in immersive_resume(
+                session_id=req.session_id.strip(),
+                user_id=user_id,
+            ):
+                if await request.is_disconnected():
+                    logger.info("客户端断开，停止恢复生成")
+                    break
+                yield event
+        except QuotaExceededError as e:
+            import json as _json
+
+            err = _json.dumps(
+                {
+                    "type": "error",
+                    "message": str(e),
+                    "code": "quota_exceeded",
+                    "category": e.category,
+                    "limit": e.limit,
+                },
+                ensure_ascii=False,
+            )
+            yield f"data: {err}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# ── 习题 API ──────────────────────────────────────────────────
+
+
+@router.get("/exercises/{session_id}/{chapter_id}")
+async def get_exercises(
+    session_id: str,
+    chapter_id: int,
+    limit: int = 0,
+    user_id: str = Depends(get_current_user),
+):
+    """获取指定会话某章节的结构化习题数据。
+
+    返回已解析的 JSON 题目列表，前端无需自行解析 Markdown。
+    ?limit=N 可限制返回题目数量（默认 0 = 全部）。
+    """
+    try:
+        result = get_exercises_for_chapter(
+            session_id=session_id,
+            chapter_id=chapter_id,
+            user_id=user_id,
+            limit=limit,
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+# ── 习题作答结果上报 ──────────────────────────────────────────
+
+
+class QuizAnswerItem(BaseModel):
+    question: str = ""
+    user_answer: str = ""
+    correct_answer: str = ""
+    correct: bool = False
+    difficulty: str = ""  # 简单 | 中等 | 困难
+
+
+class QuizResultRequest(BaseModel):
+    session_id: str
+    chapter_id: int
+    chapter_title: str = ""
+    results: list[QuizAnswerItem] = []
+
+
+@router.post("/quiz-result")
+async def submit_quiz_result(
+    req: QuizResultRequest,
+    user_id: str = Depends(get_current_user),
+):
+    """前端习题完成后批量上报答题结果，用于更新用户画像中的知识点掌握度。"""
+    from services.immersive.profile_updater import update_profile_from_quiz
+
+    if not req.results:
+        return {"status": "ok", "message": "无答题数据"}
+
+    try:
+        result = await update_profile_from_quiz(
+            user_id=user_id,
+            session_id=req.session_id,
+            chapter_id=req.chapter_id,
+            chapter_title=req.chapter_title,
+            results=[r.model_dump() for r in req.results],
+        )
+        return result
+    except Exception as e:
+        logger.warning("习题结果上报处理失败: %s", e)
+        # 不影响用户体验，返回成功但标记处理失败
+        return {"status": "partial", "message": str(e)}
+
+
+# ── 用户确认完成 ──────────────────────────────────────────────
+
+
+class CompleteRequest(BaseModel):
+    session_id: str
+    feedback: Optional[str] = ""
+
+
+@router.post("/complete")
+async def complete_session(
+    req: CompleteRequest,
+    user_id: str = Depends(get_current_user),
+):
+    """用户主动确认完成学习会话。
+
+    生成流程结束后 session 仍为 active，只有用户确认后才标记 completed。
+    """
+    try:
+        result = complete_immersive_session(
+            session_id=req.session_id,
+            user_id=user_id,
+            feedback=req.feedback or "",
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 # ── 文件服务 ─────────────────────────────────────────────────────
@@ -241,3 +418,33 @@ async def list_courses(
         )
 
     return {"courses": courses}
+
+
+# ── 个性化推荐云朵 ─────────────────────────────────────────────────
+
+
+@router.get("/suggestions")
+async def get_suggestions(
+    user_id: str = Depends(get_current_user),
+):
+    """根据用户画像和学习历史，调用 LLM 生成个性化推荐主题云朵。
+
+    返回格式：
+    {
+        "suggestions": [
+            {"text": "主题名", "emoji": "🔥", "size": "md", "reason": "推荐理由"},
+            ...
+        ],
+        "source": "personalized" | "default"
+    }
+
+    如果画像为空或 LLM 调用失败，返回 source="default"，前端使用默认静态标签。
+    """
+    from services.immersive.suggestions import generate_suggestions
+
+    try:
+        result = await generate_suggestions(user_id)
+        return result
+    except Exception as e:
+        logger.warning("生成个性化推荐失败: %s", e)
+        return {"suggestions": [], "source": "default"}

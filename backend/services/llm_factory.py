@@ -1,8 +1,9 @@
 """
 LLM 工厂：根据数据库 settings 表（或环境变量 fallback）创建 LLM 实例
 
-额度管理通过 before_call hook 自动注入到 LLM 实例中，
-每次 LLM 真正调用 API 时自动触发额度检查，无需业务层手动调用。
+优先使用用户配置的 OpenAI 兼容接口，否则 fallback 到环境变量 LLM_API_KEY。
+
+额度管理通过 before_call hook 注入到需要限制的 LLM 实例中。
 """
 
 from __future__ import annotations
@@ -37,12 +38,23 @@ def _make_llm_quota_hook(user_id: str):
     return _hook
 
 
-def create_openai_llm(user_id: str) -> OpenAILLM:
-    """根据当前用户的 settings 创建 OpenAI 兼容 LLM 实例（自动注入额度 hook）。"""
-    api_key = _get_cfg(user_id, "llm_api_key", "LLM_API_KEY")
-    base_url = _get_cfg(user_id, "llm_base_url", "LLM_BASE_URL")
-    model = _get_cfg(user_id, "llm_model", "LLM_MODEL")
+def create_openai_llm(
+    user_id: str,
+    *,
+    api_key: str,
+    base_url: str = "",
+    model: str = "",
+    with_quota: bool = True,
+) -> OpenAILLM:
+    """创建 OpenAI 兼容 LLM 实例。
 
+    Args:
+        user_id: 用户 ID
+        api_key: OpenAI API Key（必传）。
+        base_url: OpenAI 兼容 base URL，为空则使用 SDK 默认值。
+        model: 模型名称，为空则使用 SDK 默认值。
+        with_quota: 是否注入免费额度检查 hook（默认 True）。
+    """
     if not api_key:
         raise RuntimeError(
             "未配置 LLM API Key。请在设置页面填写，或在 .env 中设置 LLM_API_KEY。"
@@ -51,13 +63,51 @@ def create_openai_llm(user_id: str) -> OpenAILLM:
         model_name=model or None,
         api_key=api_key,
         base_url=base_url or None,
-        before_call=_make_llm_quota_hook(user_id),
+        before_call=_make_llm_quota_hook(user_id) if with_quota else None,
     )
 
 
 def get_llm(user_id: str) -> BaseLLM:
     """每次调用都从数据库/环境变量读取指定用户的最新配置，确保设置页修改后立即生效。
 
-    返回的 LLM 实例已自动注入额度检查 hook，业务层无需手动调用 check_and_consume。
+    优先级：
+      1. 用户在设置页配置了自己的 OpenAI key → 使用 OpenAI（不限额）
+      2. 环境变量有 LLM_API_KEY → 使用 OpenAI（消耗免费额度）
+      3. 都没有 → 报错
+
+    用户自配 OpenAI key 不限额；
+    只有 fallback 到平台 OpenAI key 时才会消耗免费对话额度。
     """
-    return create_openai_llm(user_id)
+    # 一次性读取用户配置
+    user_key = _get_cfg(user_id, "llm_api_key", "")
+    base_url = _get_cfg(user_id, "llm_base_url", "")
+    model = _get_cfg(user_id, "llm_model", "")
+
+    # 用户自定义的 OpenAI key 优先, 不消耗免费额度
+    if user_key:
+        # 检查必须的用户配置项是否齐全
+        if not base_url or not model:
+            raise RuntimeError(
+                "用户配置的 LLM 不完整。请确保同时设置了 llm_api_key, llm_base_url 和 llm_model。"
+            )
+
+        return create_openai_llm(
+            user_id, api_key=user_key, base_url=base_url, model=model, with_quota=False
+        )
+
+    # 环境变量 LLM_API_KEY, 消耗免费额度
+    env_key = os.getenv("LLM_API_KEY", "")
+    base_url = os.getenv("LLM_BASE_URL", "")
+    model = os.getenv("LLM_MODEL", "")
+    if env_key:
+        # 检查必须的环境变量是否齐全
+        if not base_url or not model:
+            raise RuntimeError(
+                "环境变量配置的 LLM 不完整。请确保同时设置了 LLM_API_KEY, LLM_BASE_URL 和 LLM_MODEL。"
+            )
+
+        return create_openai_llm(
+            user_id, api_key=env_key, base_url=base_url, model=model, with_quota=True
+        )
+
+    raise RuntimeError("未配置任何 LLM 服务。请在 .env 中设置 LLM_API_KEY。")

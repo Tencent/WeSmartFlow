@@ -214,3 +214,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# 内容安全审核规则（私有，不开源）
+config/content_rules.yaml
+config/sensitive_words/

@@ -6,11 +6,13 @@ Tutor Agent 只需描述"想展示什么内容"，CardWriterAgent 负责：
   2. 调用 latex_pdf_compile 编译 PDF
   3. 编译失败时自动修复重试
 
-生成的 PDF 保存至 documents/cards/{card_id}/card.pdf，成功时返回相对于 CARDS_DIR 的相对路径。
+生成的 PDF 保存至 documents/cards/{card_id}/card.pdf，流式成功结果返回 JSON：{"file_id": "{card_id}/card.pdf", "script": "..."}。
 """
 
 from __future__ import annotations
 
+import json
+import logging
 import os
 import shutil
 import tempfile
@@ -31,22 +33,24 @@ from repositories.document_repo import DocumentRepository
 
 
 # CardWriterAgent 的 system prompt
-_CARD_WRITER_SYSTEM_PROMPT = """你是精通 LaTeX Beamer 的卡片设计师，专注生成轻量、精炼的知识卡片。
+_CARD_WRITER_SYSTEM_PROMPT = """你是精通 LaTeX Beamer 的卡片设计师，专注生成轻量、精炼的单页知识卡片。
 
 ## 工作流程
 
-1. 按照用户要求的页数上限规划内容，**严格不超过指定的内容页数**
+1. 根据用户提供的结构化内容，设计**恰好 1 页**的知识卡片
 2. 如需插图，先调用 generate_teaching_image 生成图片到工作目录，再在 tex 中引用
 3. 用 write_file 将完整 .tex 写入指定路径
 4. 用 latex_pdf_compile 编译 PDF
 5. 编译失败时根据错误日志修复后重试（最多 2 次）
 6. 编译成功后简要说明已完成，无需输出文件路径
 
-## 页数约束（最重要）
+## 页数约束（最重要，硬性规则）
 
-- 用户会在指令中指定 max_pages（页数上限，1-3）
-- **页面总数必须 ≤ max_pages，宁可少不可多**
-- 每页不超过 6 行文字，保持简洁
+- **只生成 1 页内容页**，绝对不允许超过 1 页
+- 每页不超过 6 行文字（含 itemize 条目），保持极度简洁
+- **如果收到的内容超过一页能放下的量，必须主动裁剪，只保留最核心的 2-3 个要点**
+- 宁可内容少，绝不多加一页
+- 禁止使用 `\pause`、多个 `\begin{frame}` 或任何分页手段
 
 ## TeX 格式规范
 
@@ -97,7 +101,7 @@ array, enumitem
 
 
 def _build_image_tool(user_id, before_call_hook=None):
-    """构建 OpenAI 兼容图像生成工具实例。"""
+    """构建图像生成工具实例（OpenAI 兼容接口）。"""
     import logging
     import os
 
@@ -129,7 +133,6 @@ def _build_image_tool(user_id, before_call_hook=None):
 def _build_card_writer_agent(work_dir: Path, user_id) -> ReActAgent:
     """创建 CardWriterAgent，工作目录限定在 work_dir 下，支持插图生成。"""
 
-    # 图像生成工具额度 hook
     def _image_hook():
         check_and_consume(user_id, "image")
 
@@ -151,18 +154,19 @@ def _build_card_writer_agent(work_dir: Path, user_id) -> ReActAgent:
 
 class GenerateCardTool(BaseTool):
     """
-    委派 CardWriterAgent 生成 PDF 知识卡片（Beamer + SimplePlus 主题）。
+    委派 CardWriterAgent 生成单页 PDF 知识卡片（Beamer + SimplePlus 主题）。
 
     Tutor Agent 描述想展示的内容，CardWriterAgent 负责编写 tex、编译 PDF。
-    成功时返回相对于 CARDS_DIR 的相对路径（如 {card_id}/card.pdf），失败时返回 Error: 开头的错误信息。
+    流式成功结果返回 JSON：{"file_id": "{card_id}/card.pdf", "script": "..."}；失败时返回 Error: 开头的错误信息。
     """
 
     name = "generate_card"
     description = (
-        "委派专门的卡片生成 Agent 制作一张轻量 PDF 知识卡片（Beamer 风格，支持插图）。"
-        "每次只生成 1-3 页内容，适合聚焦单个知识点、对比或步骤。"
-        "描述你想展示的内容即可，卡片的排版、插图和编译由子 Agent 负责。"
-        "成功时返回相对路径（如 {card_id}/card.pdf），失败时返回 Error: 开头的错误信息。"
+        "生成一张单页 PDF 知识卡片（Beamer 风格，支持插图）。"
+        "每张卡片聚焦一个知识点，你提供标题和内容描述，排版由卡片生成器负责。"
+        "同一次对话可以多次调用，为不同子概念各生成一张卡片。"
+        "成功时返回 JSON：{file_id, script}，其中 script 是这张卡片的口语化讲解稿（100-200字）。"
+        "失败时返回 Error: 开头的错误信息。"
     )
     parameters = {
         "type": "object",
@@ -171,25 +175,21 @@ class GenerateCardTool(BaseTool):
                 "type": "string",
                 "description": "卡片标题，简洁有力，如'快速排序 — 核心思路'",
             },
-            "content_description": {
+            "content": {
                 "type": "string",
                 "description": (
-                    "描述卡片需要展示的内容，越详细越好。"
-                    "例如：核心概念、关键要点、对比项、算法步骤、公式等。"
-                    "子 Agent 会据此自主设计卡片结构和排版。"
+                    "卡片需要展示的内容，自然语言描述，越详细越好。"
+                    "包括：核心概念、关键要点、具体例子、公式、对比、流程步骤等。"
+                    "卡片生成器会据此自主设计排版，内容越丰富卡片质量越高。"
                 ),
-            },
-            "max_pages": {
-                "type": "integer",
-                "description": "页数上限，取值 1-3，默认 2。聚焦单概念用 1，需要对比或步骤用 2-3。",
             },
             "node_ids": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "关联的知识节点ID列表，用于建立文档与节点的链接",
+                "description": "关联的知识节点ID列表，用于建立文档与节点的链接（可选）",
             },
         },
-        "required": ["title", "content_description"],
+        "required": ["title", "content"],
     }
 
     def __init__(self, user_id=None, session_id=None, on_result_hook=None):
@@ -197,30 +197,149 @@ class GenerateCardTool(BaseTool):
         self.user_id = user_id
         self.session_id = session_id
 
-    def run(
+    def run(self, **kwargs):
+        """占位实现（满足抽象基类要求）。实际调用路径为 async_stream_run。"""
+        raise NotImplementedError("GenerateCardTool 仅支持 async_stream_run 调用")
+
+    async def async_stream_run(
         self,
         title: str,
-        content_description: str,
-        max_pages: int = 2,
+        content: str,
         node_ids: list = None,
         **_,
-    ) -> str:
-        max_pages = max(1, min(3, int(max_pages)))  # 硬性限制 1-3
+    ):
+        """流式版本：透传 CardWriterAgent 的所有流式事件，最后 yield 最终 JSON 字符串。
+
+        yield 顺序：
+        1. CardWriterAgent.async_stream 产生的所有 AgentStreamEvent（透传给父 Agent）
+        2. 最后 yield 一个 str（JSON 格式的 {file_id, script}），供父 Agent 写入 history
+
+        Yields:
+            AgentStreamEvent | str
+        """
+        logger = logging.getLogger(__name__)
         card_id = str(uuid.uuid4())
-        # 使用系统临时目录隔离 subagent 编译中间产物，退出 with 块后自动清理
+
         with tempfile.TemporaryDirectory(prefix=f"card_{card_id}_") as _tmp:
             work_dir = Path(_tmp)
-            result = self._run_agent(
-                card_id, work_dir, title, content_description, max_pages
+            tmp_tex = work_dir / "card.tex"
+            tmp_pdf = work_dir / "card.pdf"
+            card_dir = CARDS_DIR / card_id
+            card_dir.mkdir(parents=True, exist_ok=True)
+
+            instruction = (
+                f"请生成一张标题为「{title}」的单页 PDF 知识卡片。\n\n"
+                f"内容要求：\n{content}\n\n"
+                f"【硬性约束】只生成 1 页，每页最多 6 行文字。"
+                f"如果上面的内容超过一页能放下的量，请主动裁剪，只保留最核心的 2-3 个要点，宁少勿多。\n\n"
+                f"工作目录：{work_dir}\n"
+                f"tex 文件路径：{tmp_tex}\n"
+                f"编译完成后 PDF 路径应为：{tmp_pdf}\n"
+                f"如需插图，调用 generate_teaching_image 并将 output_dir 设为：{work_dir}\n\n"
+                f"所有文件必须写在工作目录 {work_dir} 下，不得写到其他位置。"
             )
 
-            # 如果生成成功，创建文档记录
-            if not result.startswith("Error") and result.endswith(".pdf"):
-                self._create_document_record(
-                    card_id, result, title, content_description, node_ids
-                )
+            agent = _build_card_writer_agent(
+                work_dir, user_id=self.user_id or "default"
+            )
 
-            return result
+            yield f"正在生成知识卡片「{title}」..."
+
+            # 透传 CardWriterAgent 的所有流式事件
+            try:
+                async for event in agent.async_stream(instruction):
+                    yield event
+            except Exception as e:  # pylint: disable=broad-except
+                logger.exception("[GenerateCardTool] CardWriterAgent 流式运行异常")
+                yield f"Error: 生成卡片失败 — {e}"
+                return
+
+            # CardWriterAgent 完成后，处理产物
+            if not tmp_pdf.exists():
+                yield "Error: 卡片生成失败 — PDF 文件未生成"
+                return
+
+            yield "卡片编译完成，正在归档文件..."
+
+            # 移动产物到最终目录
+            final_tex = card_dir / "card.tex"
+            final_pdf = card_dir / "card.pdf"
+            if tmp_tex.exists():
+                shutil.move(str(tmp_tex), str(final_tex))
+            shutil.move(str(tmp_pdf), str(final_pdf))
+
+            # 移动图片
+            img_extensions = {".png", ".jpg", ".jpeg", ".webp"}
+            for img_file in work_dir.iterdir():
+                if img_file.suffix.lower() in img_extensions:
+                    shutil.move(str(img_file), str(card_dir / img_file.name))
+
+            # 资产归档
+            try:
+                from services.asset_service import archive_pdf, archive_image
+
+                archive_pdf(
+                    final_pdf,
+                    title=title,
+                    source_type="card",
+                    session_id=self.session_id or "",
+                )
+                for img in card_dir.iterdir():
+                    if img.suffix.lower() in img_extensions:
+                        prompt = ""
+                        meta_file = card_dir / f"{img.stem}.meta.json"
+                        if meta_file.exists():
+                            try:
+                                prompt = json.loads(
+                                    meta_file.read_text(encoding="utf-8")
+                                ).get("prompt", "")
+                            except Exception:  # pylint: disable=broad-except
+                                pass
+                        archive_image(
+                            img, prompt=prompt, source_type="card", chapter=card_id
+                        )
+                logger.info("卡片 %s 资产归档完成", card_id)
+            except Exception as arch_err:  # pylint: disable=broad-except
+                logger.warning("卡片 %s 资产归档失败: %s", card_id, arch_err)
+
+            yield "正在生成讲解稿..."
+
+            # 生成讲解稿
+            script = ""
+            try:
+                tex_content = (
+                    final_tex.read_text(encoding="utf-8") if final_tex.exists() else ""
+                )
+                llm = get_llm(self.user_id)
+                prompt = (
+                    f"以下是一张标题为「{title}」的 LaTeX Beamer 知识卡片源码。\n"
+                    f"请为这张卡片写一段口语化的讲解旁白，100-200字，"
+                    f"用陈述句，语气自然，不要复读卡片文字，要有启发性。\n\n"
+                    f"```tex\n{tex_content[:4000]}\n```\n\n"
+                    f"只输出旁白文本，不要任何格式标记。"
+                )
+                response = await llm.async_think(
+                    [{"role": "user", "content": prompt}],
+                    config={"temperature": 0.6, "max_tokens": 400},
+                )
+                script = (response.content or "").strip()
+            except Exception as e:  # pylint: disable=broad-except
+                logger.warning("讲解稿生成失败: %s", e)
+
+            if script:
+                (card_dir / "script.txt").write_text(script, encoding="utf-8")
+
+            yield "正在保存文档记录..."
+
+            # 创建文档记录
+            self._create_document_record(
+                card_id, f"{card_id}/card.pdf", title, content, node_ids
+            )
+
+            # 最后 yield 最终结果字符串，供父 Agent 写入 history
+            yield json.dumps(
+                {"file_id": f"{card_id}/card.pdf", "script": script}, ensure_ascii=False
+            )
 
     def _create_document_record(
         self,
@@ -234,15 +353,11 @@ class GenerateCardTool(BaseTool):
         try:
             doc_repo = DocumentRepository()
 
-            # 卡片目录: documents/cards/{card_id}/
             card_dir = CARDS_DIR / card_id
             pdf_path = card_dir / "card.pdf"
             file_size = os.path.getsize(pdf_path) if pdf_path.exists() else 0
-
-            # storage_key: 相对于 DATA_DIR 的路径
             storage_key = f"documents/cards/{card_id}/card.pdf"
 
-            # 创建文档记录
             if not self.user_id:
                 raise ValueError("GenerateCardTool 缺少 user_id，拒绝写入脏数据")
             doc = doc_repo.create_generated(
@@ -274,150 +389,6 @@ class GenerateCardTool(BaseTool):
 
         except Exception as e:  # pylint: disable=broad-except
             print(f"创建卡片文档记录失败: {e}")
-
-    def _run_agent(
-        self,
-        card_id: str,
-        work_dir: Path,
-        title: str,
-        content_description: str,
-        max_pages: int,
-    ) -> str:
-        try:
-            tmp_tex = work_dir / "card.tex"
-            tmp_pdf = work_dir / "card.pdf"
-
-            # 卡片最终目录: documents/cards/{card_id}/
-            card_dir = CARDS_DIR / card_id
-            card_dir.mkdir(parents=True, exist_ok=True)
-
-            # 组装给 subagent 的指令，限定其在 work_dir 下工作
-            instruction = (
-                f"请生成一张标题为「{title}」的 PDF 知识卡片。\n\n"
-                f"内容要求：\n{content_description}\n\n"
-                f"【页数约束】页面总数不超过 {max_pages} 页，严格执行。\n\n"
-                f"工作目录：{work_dir}\n"
-                f"tex 文件路径：{tmp_tex}\n"
-                f"编译完成后 PDF 路径应为：{tmp_pdf}\n"
-                f"如需插图，调用 generate_teaching_image 并将 output_dir 设为：{work_dir}\n\n"
-                f"所有文件必须写在工作目录 {work_dir} 下，不得写到其他位置。"
-            )
-
-            # 调用 CardWriterAgent（同步），工作目录限定
-            agent = _build_card_writer_agent(
-                work_dir, user_id=self.user_id or "default"
-            )
-            result = agent.run(instruction)
-            output = result.output or ""
-
-            if not tmp_pdf.exists():
-                return f"Error: 卡片生成失败 — {output}"
-
-            # 由代码硬性将产物移动到最终位置
-            final_tex = card_dir / "card.tex"
-            final_pdf = card_dir / "card.pdf"
-            if tmp_tex.exists():
-                shutil.move(str(tmp_tex), str(final_tex))
-
-            shutil.move(str(tmp_pdf), str(final_pdf))
-
-            # 将工作目录中的图片也移动到卡片目录
-            img_extensions = {".png", ".jpg", ".jpeg", ".webp"}
-            for img_file in work_dir.iterdir():
-                if img_file.suffix.lower() in img_extensions:
-                    dst_img = card_dir / img_file.name
-                    shutil.move(str(img_file), str(dst_img))
-
-            # ── TTS 语音讲解生成 ──────────────────────────────────
-            try:
-                self._generate_card_audio(card_id, final_tex, final_pdf)
-            except Exception as tts_err:  # pylint: disable=broad-except
-                import logging
-
-                logging.getLogger(__name__).warning("卡片 TTS 生成失败: %s", tts_err)
-
-            # ── 资产归档到 data/assets/ ──────────────────────────
-            try:
-                from services.asset_service import (
-                    archive_pdf,
-                    archive_audio,
-                    archive_image,
-                )
-
-                # 归档 PDF
-                archive_pdf(
-                    final_pdf,
-                    title=title,
-                    source_type="card",
-                    session_id=self.session_id or "",
-                )
-                # 归档图片
-                for img in card_dir.iterdir():
-                    if img.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}:
-                        prompt = ""
-                        meta_file = card_dir / f"{img.stem}.meta.json"
-                        if meta_file.exists():
-                            import json as _json2
-
-                            try:
-                                _meta = _json2.loads(
-                                    meta_file.read_text(encoding="utf-8")
-                                )
-                                prompt = _meta.get("prompt", "")
-                            except Exception:  # pylint: disable=broad-except
-                                pass
-                        archive_image(
-                            img,
-                            prompt=prompt,
-                            source_type="card",
-                            chapter=card_id,
-                        )
-                # 归档 TTS 音频
-                audio_dir = card_dir / "audio"
-                if audio_dir.exists():
-                    notes_path = card_dir / "notes.json"
-                    notes = []
-                    if notes_path.exists():
-                        import json as _json
-
-                        try:
-                            notes = _json.loads(notes_path.read_text(encoding="utf-8"))
-                        except Exception:  # pylint: disable=broad-except
-                            pass
-                    audio_extensions = {".wav", ".mp3"}
-                    for audio_file in sorted(
-                        f
-                        for f in audio_dir.iterdir()
-                        if f.suffix.lower() in audio_extensions
-                    ):
-                        import re as _re
-
-                        m = _re.match(r"frame_(\d+)", audio_file.stem)
-                        frame_idx = int(m.group(1)) if m else 0
-                        text = (
-                            notes[frame_idx - 1] if 0 < frame_idx <= len(notes) else ""
-                        )
-                        archive_audio(
-                            audio_file,
-                            text=text,
-                            source_type="card",
-                            chapter=card_id,
-                            frame_index=frame_idx,
-                        )
-                import logging as _log
-
-                _log.getLogger(__name__).info("卡片 %s 资产归档完成", card_id)
-            except Exception as arch_err:  # pylint: disable=broad-except
-                import logging as _log
-
-                _log.getLogger(__name__).warning(
-                    "卡片 %s 资产归档失败: %s", card_id, arch_err
-                )
-
-            return f"{card_id}/card.pdf"  # 返回相对于 CARDS_DIR 的路径
-
-        except Exception as e:  # pylint: disable=broad-except
-            return f"Error: 生成卡片失败 — {e}"
 
     def _generate_card_audio(
         self, card_id: str, tex_path: Path, pdf_path: Path

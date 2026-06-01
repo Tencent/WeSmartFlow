@@ -80,6 +80,13 @@ class QuizService:
         )
         return quiz.model_dump(mode="json")
 
+    def get_quiz(self, user_id: str, quiz_id: str) -> dict:
+        """获取一道题，供前端答题卡片渲染。"""
+        quiz = self._assert_quiz_owner(user_id, quiz_id)
+        data = quiz.model_dump(mode="json")
+        data["answered"] = bool(quiz.answered_at)
+        return data
+
     async def submit_answer(self, user_id: str, quiz_id: str, user_answer: str) -> dict:
         """用户提交答案，自动评分并更新记忆状态"""
         quiz = self._assert_quiz_owner(user_id, quiz_id)

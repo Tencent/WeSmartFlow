@@ -27,19 +27,13 @@
           <header class="te-head">
             <div class="te-tag">
               <span class="te-dot" />
-              A Learning Companion · Just For You
+              AI Learning Agent
             </div>
             <h1 class="te-title">
-              这一刻，<br />
-              <span class="te-title-grad">世界安静下来，只为你的学习。</span>
+              今天，<span class="te-title-grad">想搞懂什么？</span>
             </h1>
             <p class="te-sub">
-              在这里，没有铺天盖地的课程推送，没有被算法喂养的干扰。<br />
-              只有一位懂你的
-              Agent，陪你把一个主题，<em>真正学懂、学深、学透</em>。
-            </p>
-            <p class="te-sub te-sub-2">
-              告诉它，你心里那个一直想搞明白的东西 —— 它会用尽全力，只为你学会。
+              输入任意主题，Agent 会陪你把它<em>真正学透</em>。
             </p>
           </header>
 
@@ -50,62 +44,32 @@
           >
             <div class="te-input-ico">
               <svg
-                width="20"
-                height="20"
+                width="18"
+                height="18"
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"
                 stroke-width="2"
               >
-                <path d="M12 2a5 5 0 0 1 5 5c0 2-1 3.5-2.5 5S12 15 12 17" />
-                <circle cx="12" cy="20" r="1" fill="currentColor" />
+                <circle cx="11" cy="11" r="8" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
               </svg>
             </div>
             <input
               ref="topicInputEl"
               v-model="topicInput"
               class="te-input"
-              placeholder="此刻，你最想学的是什么？"
+              placeholder="例如：傅里叶变换、TCP/IP 协议、期权定价..."
               autofocus
-              @keydown.enter="startLearning"
               @focus="topicFocused = true"
               @blur="topicFocused = false"
             />
-            <div v-if="!topicInput.trim()" class="te-input-hint">
-              <span>✨</span> 或从周围的灵感中，拾取一个
-            </div>
-            <div v-else class="te-input-hint ok">
-              <span>💫</span> 选择一种陪伴方式 ↓
-            </div>
-          </div>
-
-          <!-- 两种模式 -->
-          <div class="te-modes">
-            <!-- 人机交互 -->
-            <button
-              class="te-mode te-mode-a"
-              :class="{ ready: topicInput.trim() }"
-              :disabled="!topicInput.trim()"
-              @click="startLearning"
-            >
-              <div class="te-mode-icon">🤝</div>
-              <div class="te-mode-body">
-                <div class="te-mode-title">
-                  与我对话
-                  <span class="te-mode-tag">你来主导</span>
-                </div>
-                <div class="te-mode-desc">
-                  像一场促膝长谈，你来发问，我来回应。<br />
-                  一起把这个主题，聊到你真正"懂了"为止。
-                </div>
-                <ul class="te-mode-feats">
-                  <li>💬 自由的节奏，不被任何人催促</li>
-                  <li>🧩 所思所想，自动凝结成卡片</li>
-                  <li>🗺️ 一点一点，拼出你专属的知识地图</li>
-                </ul>
-              </div>
-              <div class="te-mode-cta">
-                开启这场对话
+            <transition name="hint-fade">
+              <button
+                v-if="topicInput.trim()"
+                class="te-input-clear"
+                @click="topicInput = ''"
+              >
                 <svg
                   width="14"
                   height="14"
@@ -114,52 +78,176 @@
                   stroke="currentColor"
                   stroke-width="2.5"
                 >
-                  <polyline points="9 18 15 12 9 6" />
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
                 </svg>
-              </div>
-            </button>
+              </button>
+            </transition>
+          </div>
 
-            <!-- AI 主导 -->
-            <button
-              class="te-mode te-mode-b"
-              :class="{ ready: topicInput.trim() }"
-              :disabled="!topicInput.trim()"
-              @click="startImmersive"
-            >
-              <div class="te-mode-icon">🤖</div>
-              <div class="te-mode-body">
-                <div class="te-mode-title">
-                  交给我吧
-                  <span class="te-mode-tag hot">一心一意</span>
-                </div>
-                <div class="te-mode-desc">
-                  让我为你铺好整条路。<br />
-                  从第一页讲义，到最后一道习题，我把一切准备到最好，只等你来。
-                </div>
-                <ul class="te-mode-feats">
-                  <li>📚 完整大纲，由浅入深</li>
-                  <li>🎧 讲义、PDF、语音，一一奉上</li>
-                  <li>✍️ 习题与答案，陪你走到最后</li>
-                </ul>
-              </div>
-              <div class="te-mode-cta alt">
-                让我为你启程
+          <!-- 模式切换 -->
+          <div class="te-mode-switch">
+            <!-- Tab 选择器 -->
+            <div class="te-tabs">
+              <button
+                class="te-tab"
+                :class="{ active: selectedMode === 'chat' }"
+                @click="selectedMode = 'chat'"
+              >
                 <svg
-                  width="14"
-                  height="14"
+                  width="15"
+                  height="15"
                   viewBox="0 0 24 24"
                   fill="none"
                   stroke="currentColor"
-                  stroke-width="2.5"
+                  stroke-width="2"
                 >
-                  <polyline points="9 18 15 12 9 6" />
+                  <path
+                    d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"
+                  />
                 </svg>
+                自由对话
+              </button>
+              <button
+                class="te-tab"
+                :class="{ active: selectedMode === 'immersive' }"
+                @click="selectedMode = 'immersive'"
+              >
+                <svg
+                  width="15"
+                  height="15"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <rect x="2" y="3" width="20" height="14" rx="2" />
+                  <line x1="8" y1="21" x2="16" y2="21" />
+                  <line x1="12" y1="17" x2="12" y2="21" />
+                </svg>
+                沉浸课程
+                <span class="te-tab-hot">HOT</span>
+              </button>
+              <div class="te-tab-indicator" :class="`ind-${selectedMode}`" />
+            </div>
+
+            <!-- 模式详情面板 -->
+            <transition name="te-panel" mode="out-in">
+              <!-- 自由对话 -->
+              <div
+                v-if="selectedMode === 'chat'"
+                key="chat"
+                class="te-panel te-panel-a"
+              >
+                <div class="te-panel-feats">
+                  <div class="te-panel-feat">
+                    <div class="te-panel-feat-icon">💬</div>
+                    <div class="te-panel-feat-title">自由节奏</div>
+                    <div class="te-panel-feat-desc">随时发问，即时回应</div>
+                  </div>
+                  <div class="te-panel-feat">
+                    <div class="te-panel-feat-icon">🧩</div>
+                    <div class="te-panel-feat-title">知识卡片</div>
+                    <div class="te-panel-feat-desc">自动凝结成卡片</div>
+                  </div>
+                  <div class="te-panel-feat">
+                    <div class="te-panel-feat-icon">🗺️</div>
+                    <div class="te-panel-feat-title">知识地图</div>
+                    <div class="te-panel-feat-desc">构建专属知识体系</div>
+                  </div>
+                </div>
+                <button
+                  class="te-start-btn te-start-a"
+                  :disabled="!topicInput.trim()"
+                  @click="startLearning"
+                >
+                  <svg
+                    width="15"
+                    height="15"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.5"
+                  >
+                    <polyline points="9 18 15 12 9 6" />
+                  </svg>
+                  开始对话
+                </button>
               </div>
-            </button>
+
+              <!-- 沉浸课程 -->
+              <div v-else key="immersive" class="te-panel te-panel-b">
+                <div class="te-panel-feats">
+                  <div class="te-panel-feat">
+                    <div class="te-panel-feat-icon">📚</div>
+                    <div class="te-panel-feat-title">完整大纲</div>
+                    <div class="te-panel-feat-desc">由浅入深的课程规划</div>
+                  </div>
+                  <div class="te-panel-feat">
+                    <div class="te-panel-feat-icon">🎧</div>
+                    <div class="te-panel-feat-title">语音讲解</div>
+                    <div class="te-panel-feat-desc">随时随地听课</div>
+                  </div>
+                  <div class="te-panel-feat">
+                    <div class="te-panel-feat-icon">✍️</div>
+                    <div class="te-panel-feat-title">配套习题</div>
+                    <div class="te-panel-feat-desc">自动出题检验掌握</div>
+                  </div>
+                </div>
+                <div class="te-options">
+                  <label class="te-option-toggle">
+                    <input v-model="enableAudio" type="checkbox" />
+                    <span class="te-option-label">🔊 生成语音讲解</span>
+                    <span class="te-option-hint">逐页讲稿 + 音频</span>
+                  </label>
+                  <label class="te-option-toggle">
+                    <input v-model="enableExercises" type="checkbox" />
+                    <span class="te-option-label">✏️ 生成配套习题</span>
+                    <span class="te-option-hint">自动出题检验掌握</span>
+                  </label>
+                </div>
+                <button
+                  class="te-start-btn te-start-b"
+                  :disabled="!topicInput.trim()"
+                  @click="
+                    $router.push({
+                      path: '/immersive',
+                      query: {
+                        topic: topicInput.trim(),
+                        enable_audio: enableAudio ? '1' : '0',
+                        enable_exercises: enableExercises ? '1' : '0',
+                      },
+                    })
+                  "
+                >
+                  <svg
+                    width="15"
+                    height="15"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.5"
+                  >
+                    <polyline points="9 18 15 12 9 6" />
+                  </svg>
+                  开始课程
+                </button>
+              </div>
+            </transition>
           </div>
 
-          <div class="te-foot">
-            <span>🌙 无论夜多深，有我陪你一起。</span>
+          <!-- 推荐主题快捷选 -->
+          <div class="te-suggestions">
+            <span class="te-sug-label">试试看</span>
+            <button
+              v-for="c in clouds.slice(0, 6)"
+              :key="c.text"
+              class="te-sug-chip"
+              :class="{ active: topicInput === c.text }"
+              @click="topicInput = c.text"
+            >
+              {{ c.emoji }} {{ c.text }}
+            </button>
           </div>
         </div>
       </div>
@@ -186,84 +274,32 @@
                 </svg>
               </button>
               <div class="st-topic-badge">
-                <span class="st-topic-icon">{{
-                  learningMode === "immersive" ? "🤖" : "🎓"
-                }}</span>
+                <span class="st-topic-icon">🎓</span>
                 <span class="st-topic-name">{{ currentTopic }}</span>
               </div>
               <!-- 人机交互模式 badge -->
-              <template v-if="learningMode === 'chat'">
-                <span v-if="phase === 'generating'" class="badge badge-brand">
-                  <span class="gen-pulse" /> 连接中
-                </span>
-                <span v-else-if="pdfCards.length > 0" class="badge badge-green">
-                  {{ pdfCards.length }} 张卡片
-                </span>
-              </template>
-              <!-- AI主导模式 badge -->
-              <template v-else>
-                <span v-if="imGenerating" class="badge badge-brand">
-                  <span class="gen-pulse" />
-                  {{ imStatusMessage || "生成中" }}
-                </span>
-                <span v-else-if="imCompleted" class="badge badge-green"
-                  >✅ 全部完成</span
-                >
-                <span
-                  v-else-if="imChapters.length > 0"
-                  class="badge badge-green"
-                  >{{ imChapters.length }} 章</span
-                >
-              </template>
+              <span v-if="phase === 'generating'" class="badge badge-brand">
+                <span class="gen-pulse" /> 连接中
+              </span>
+              <span
+                v-else-if="cards.filter((c) => !c.loading).length > 0"
+                class="badge badge-green"
+              >
+                {{ cards.filter((c) => !c.loading).length }} 张卡片
+              </span>
             </div>
             <div class="st-right">
-              <!-- 人机交互模式：卡片导航 + 导出 -->
-              <template v-if="learningMode === 'chat'">
-                <div v-if="pdfCards.length > 1" class="st-nav">
-                  <button
-                    class="nav-btn"
-                    :disabled="currentPdfIndex === 0"
-                    @click="selectCard(currentPdfIndex - 1)"
-                  >
-                    <svg
-                      width="13"
-                      height="13"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                    >
-                      <polyline points="15 18 9 12 15 6" />
-                    </svg>
-                  </button>
-                  <span class="slide-counter"
-                    >{{ currentPdfIndex + 1 }} / {{ pdfCards.length }}</span
-                  >
-                  <button
-                    class="nav-btn"
-                    :disabled="currentPdfIndex === pdfCards.length - 1"
-                    @click="selectCard(currentPdfIndex + 1)"
-                  >
-                    <svg
-                      width="13"
-                      height="13"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                    >
-                      <polyline points="9 18 15 12 9 6" />
-                    </svg>
-                  </button>
-                </div>
+              <!-- 卡片导航 -->
+              <div
+                v-if="cards.filter((c) => !c.loading).length > 1"
+                class="st-nav"
+              >
                 <button
-                  v-if="pdfCards.length > 0"
-                  class="export-btn"
-                  :disabled="isExporting"
-                  @click="exportSlides"
+                  class="nav-btn"
+                  :disabled="currentCardIndex === 0"
+                  @click="selectCard(currentCardIndex - 1)"
                 >
                   <svg
-                    v-if="!isExporting"
                     width="13"
                     height="13"
                     viewBox="0 0 24 24"
@@ -271,51 +307,29 @@
                     stroke="currentColor"
                     stroke-width="2"
                   >
-                    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
-                    <polyline points="7 10 12 15 17 10" />
-                    <line x1="12" y1="15" x2="12" y2="3" />
+                    <polyline points="15 18 9 12 15 6" />
                   </svg>
-                  <svg
-                    v-else
-                    width="13"
-                    height="13"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    class="spin-icon"
-                  >
-                    <path d="M21 12a9 9 0 11-6.219-8.56" />
-                  </svg>
-                  {{ isExporting ? "合并中..." : "导出全部 PDF" }}
                 </button>
-              </template>
-            </div>
-          </div>
-
-          <!-- AI主导模式：阶段进度条 -->
-          <div
-            v-if="learningMode === 'immersive' && imGenerating"
-            class="im-progress-wrap"
-          >
-            <div class="im-progress-bar">
-              <div
-                class="im-progress-fill"
-                :style="{ width: imProgress + '%' }"
-              />
-            </div>
-            <div class="im-stage-indicators">
-              <div
-                v-for="s in imStages"
-                :key="s.key"
-                class="im-stage-item"
-                :class="{
-                  active: imCurrentStage === s.key,
-                  done: isImStageComplete(s.key),
-                }"
-              >
-                <span class="im-stage-icon">{{ s.icon }}</span>
-                <span class="im-stage-name">{{ s.name }}</span>
+                <span class="slide-counter"
+                  >{{ currentCardIndex + 1 }} /
+                  {{ cards.filter((c) => !c.loading).length }}</span
+                >
+                <button
+                  class="nav-btn"
+                  :disabled="currentCardIndex === cards.length - 1"
+                  @click="selectCard(currentCardIndex + 1)"
+                >
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <polyline points="9 18 15 12 9 6" />
+                  </svg>
+                </button>
               </div>
             </div>
           </div>
@@ -323,260 +337,220 @@
           <!-- 卡片舞台 -->
           <div class="slide-stage">
             <!-- ═══ 人机交互模式内容 ═══ -->
-            <template v-if="learningMode === 'chat'">
-              <!-- 连接中骨架 -->
-              <div v-if="phase === 'generating'" class="outline-generating">
-                <div class="og-header">
-                  <div class="og-spinner">
-                    <div class="agent-avatar" style="width: 44px; height: 44px">
+            <!-- 连接中骨架 -->
+            <div v-if="phase === 'generating'" class="outline-generating">
+              <div class="og-header">
+                <div class="og-spinner">
+                  <div class="agent-avatar" style="width: 44px; height: 44px">
+                    <svg
+                      width="18"
+                      height="18"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="white"
+                      stroke-width="2"
+                    >
+                      <path d="M12 2a10 10 0 100 20A10 10 0 0012 2z" />
+                      <path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3" />
+                      <line x1="12" y1="17" x2="12.01" y2="17" />
+                    </svg>
+                  </div>
+                  <div class="og-ring" />
+                </div>
+                <div>
+                  <div class="og-title">正在连接「{{ currentTopic }}」</div>
+                  <div class="og-sub">正在创建学习会话，请稍候...</div>
+                </div>
+              </div>
+              <div class="gen-progress-bar">
+                <div
+                  class="gen-progress-fill"
+                  :style="{ width: genProgress + '%' }"
+                />
+              </div>
+            </div>
+
+            <!-- 无卡片时的空状态 -->
+            <div
+              v-else-if="cards.length === 0 && phase === 'learning'"
+              class="no-card-hint"
+            >
+              <div class="nch-icon">📄</div>
+              <div class="nch-title">暂无知识卡片</div>
+              <div class="nch-desc">
+                在右侧对话中让 Agent 生成卡片，例如：<br />「帮我生成一张关于{{
+                  currentTopic
+                }}的知识卡片」
+              </div>
+            </div>
+
+            <!-- 所有卡片都在生成中（占位状态） -->
+            <div
+              v-else-if="cards.length > 0 && cards.every((c) => c.loading)"
+              class="no-card-hint"
+            >
+              <div class="nch-icon" style="font-size: 36px; opacity: 1">
+                <svg
+                  width="36"
+                  height="36"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="var(--brand-light)"
+                  stroke-width="1.5"
+                  style="animation: spin 1.5s linear infinite"
+                >
+                  <path d="M21 12a9 9 0 11-6.219-8.56" />
+                </svg>
+              </div>
+              <div class="nch-title" style="color: var(--text-secondary)">
+                正在生成卡片...
+              </div>
+              <div class="nch-desc">卡片生成完成后将自动显示</div>
+            </div>
+
+            <!-- 卡片主展示区 -->
+            <!-- 所有卡片一次性渲染，用 v-show 切换，避免重复加载 -->
+            <template
+              v-for="(card, i) in cards"
+              :key="card.slotId || card.cardId || i"
+            >
+              <div
+                v-if="!card.loading && card.cardId"
+                v-show="i === currentCardIndex"
+                class="card-main-view"
+                :class="{ 'card-active': i === currentCardIndex }"
+              >
+                <!-- HTML 知识卡片 -->
+                <HtmlCard
+                  v-if="card.cardType === 'html'"
+                  :file-id="card.cardId"
+                  :session-id="currentSessionId || ''"
+                />
+                <!-- 交互可视化卡片 -->
+                <VizCard
+                  v-else-if="card.cardType === 'viz'"
+                  :viz-id="card.cardId"
+                  :title="card.title"
+                />
+                <!-- 做题卡片 -->
+                <QuizCard
+                  v-else-if="card.cardType === 'quiz'"
+                  :quiz-id="card.cardId"
+                  @answered="onQuizAnswered"
+                />
+              </div>
+            </template>
+            <!-- 当前卡片还在加载中时显示占位 -->
+            <div
+              v-if="currentCard && currentCard.loading"
+              class="card-main-view"
+            />
+          </div>
+
+          <!-- 卡片画廊（底部，所有卡片缩略图） -->
+          <div v-if="cards.length > 0" class="card-gallery">
+            <div class="cg-scroll">
+              <div
+                v-for="(card, i) in cards"
+                :key="card.slotId || card.cardId || i"
+                class="cg-card"
+                :class="{
+                  active: !card.loading && i === currentCardIndex,
+                  loading: card.loading,
+                }"
+                @click="!card.loading && selectCard(i)"
+              >
+                <!-- 加载中占位 -->
+                <template v-if="card.loading">
+                  <div class="cg-skeleton">
+                    <div class="cg-shimmer" />
+                    <div class="cg-stage-icon">
                       <svg
                         width="18"
                         height="18"
                         viewBox="0 0 24 24"
                         fill="none"
-                        stroke="white"
+                        stroke="currentColor"
                         stroke-width="2"
+                        class="cg-spin"
                       >
-                        <path d="M12 2a10 10 0 100 20A10 10 0 0012 2z" />
-                        <path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3" />
+                        <path d="M21 12a9 9 0 11-6.219-8.56" />
+                      </svg>
+                    </div>
+                  </div>
+                  <div class="cg-info">
+                    <div class="cg-title cg-title--loading">
+                      {{ card.title }}
+                    </div>
+                    <div class="cg-stage-label">{{ card.stageLabel }}</div>
+                  </div>
+                </template>
+                <!-- 已完成卡片 -->
+                <template v-else>
+                  <div class="cg-thumb-wrap">
+                    <!-- 卡片类型图标 -->
+                    <div class="cg-type-icon">
+                      <svg
+                        v-if="card.cardType === 'html'"
+                        width="22"
+                        height="22"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                      >
+                        <rect x="3" y="3" width="18" height="18" rx="2" />
+                        <path d="M3 9h18M9 21V9" />
+                      </svg>
+                      <svg
+                        v-else-if="card.cardType === 'viz'"
+                        width="22"
+                        height="22"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                      >
+                        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+                      </svg>
+                      <svg
+                        v-else-if="card.cardType === 'quiz'"
+                        width="22"
+                        height="22"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                      >
+                        <circle cx="12" cy="12" r="10" />
+                        <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
                         <line x1="12" y1="17" x2="12.01" y2="17" />
                       </svg>
                     </div>
-                    <div class="og-ring" />
+                    <div v-if="i === currentCardIndex" class="cg-active-badge">
+                      <svg
+                        width="10"
+                        height="10"
+                        viewBox="0 0 24 24"
+                        fill="currentColor"
+                      >
+                        <path d="M5 3l14 9-14 9V3z" />
+                      </svg>
+                    </div>
                   </div>
-                  <div>
-                    <div class="og-title">正在连接「{{ currentTopic }}」</div>
-                    <div class="og-sub">正在创建学习会话，请稍候...</div>
+                  <div class="cg-info">
+                    <div class="cg-title">{{ card.title }}</div>
+                    <div class="cg-type-label">
+                      {{
+                        {
+                          html: "知识卡片",
+                          viz: "交互可视化",
+                          quiz: "做题",
+                        }[card.cardType] || card.cardType
+                      }}
+                    </div>
                   </div>
-                </div>
-                <div class="gen-progress-bar">
-                  <div
-                    class="gen-progress-fill"
-                    :style="{ width: genProgress + '%' }"
-                  />
-                </div>
-              </div>
-              <!-- 无卡片时的空状态 -->
-              <div
-                v-else-if="pdfCards.length === 0 && phase === 'learning'"
-                class="no-card-hint"
-              >
-                <div class="nch-icon">📄</div>
-                <div class="nch-title">暂无知识卡片</div>
-                <div class="nch-desc">
-                  在右侧对话中让 Agent 生成卡片，例如：<br />「帮我生成一张关于{{
-                    currentTopic
-                  }}的知识卡片」
-                </div>
-              </div>
-              <!-- PDF 主展示区 -->
-              <div v-if="pdfCards.length > 0" class="pdf-main-view">
-                <canvas ref="pdfMainCanvas" class="pdf-main-canvas" />
-                <div v-if="currentCardPages > 0" class="pdf-page-nav">
-                  <button
-                    class="ppn-btn"
-                    :disabled="currentPageIndex === 0"
-                    @click="gotoPage(currentPageIndex - 1)"
-                  >
-                    <svg
-                      width="12"
-                      height="12"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2.5"
-                    >
-                      <polyline points="15 18 9 12 15 6" />
-                    </svg>
-                  </button>
-                  <span class="ppn-label"
-                    >{{ currentPageIndex + 1 }} / {{ currentCardPages }}</span
-                  >
-                  <button
-                    class="ppn-btn"
-                    :disabled="currentPageIndex === currentCardPages - 1"
-                    @click="gotoPage(currentPageIndex + 1)"
-                  >
-                    <svg
-                      width="12"
-                      height="12"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2.5"
-                    >
-                      <polyline points="9 18 15 12 9 6" />
-                    </svg>
-                  </button>
-                  <button
-                    v-if="cardAudioUrl"
-                    class="ppn-btn im-audio-btn"
-                    :class="{ playing: cardIsPlaying }"
-                    @click="playCardAudio"
-                  >
-                    {{ cardIsPlaying ? "⏸" : "🔊" }}
-                  </button>
-                </div>
-              </div>
-            </template>
-
-            <!-- ═══ AI主导模式内容 ═══ -->
-            <template v-else>
-              <!-- 生成中 + 无章节：全屏进度 -->
-              <div
-                v-if="imChapters.length === 0 && imGenerating"
-                class="im-generating"
-              >
-                <div class="im-gen-icon">
-                  {{ imStageIcon }}
-                </div>
-                <div class="im-gen-title">正在生成课件</div>
-                <div class="im-gen-topic">
-                  {{ currentTopic }}
-                </div>
-                <div class="im-gen-msg">
-                  {{ imStatusMessage }}
-                </div>
-              </div>
-              <!-- 无章节 + 未生成 -->
-              <div
-                v-else-if="imChapters.length === 0 && !imGenerating"
-                class="no-card-hint"
-              >
-                <div class="nch-icon">📚</div>
-                <div class="nch-title">等待课件生成...</div>
-              </div>
-              <!-- 有章节：PDF 渲染 -->
-              <div v-if="imChapters.length > 0" class="pdf-main-view">
-                <canvas ref="imPdfCanvas" class="pdf-main-canvas" />
-                <div v-if="imCurrentChapter" class="pdf-page-nav">
-                  <button
-                    class="ppn-btn"
-                    :disabled="imCurrentPage <= 1"
-                    @click="imGotoPage(imCurrentPage - 1)"
-                  >
-                    <svg
-                      width="12"
-                      height="12"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2.5"
-                    >
-                      <polyline points="15 18 9 12 15 6" />
-                    </svg>
-                  </button>
-                  <span class="ppn-label"
-                    >{{ imCurrentPage }} / {{ imTotalPages }}</span
-                  >
-                  <button
-                    class="ppn-btn"
-                    :disabled="imCurrentPage >= imTotalPages"
-                    @click="imGotoPage(imCurrentPage + 1)"
-                  >
-                    <svg
-                      width="12"
-                      height="12"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2.5"
-                    >
-                      <polyline points="9 18 15 12 9 6" />
-                    </svg>
-                  </button>
-                  <button
-                    v-if="imCurrentAudioUrl"
-                    class="ppn-btn im-audio-btn"
-                    :class="{ playing: imIsPlaying }"
-                    @click="imPlayAudio"
-                  >
-                    {{ imIsPlaying ? "⏸" : "🔊" }}
-                  </button>
-                </div>
-              </div>
-            </template>
-          </div>
-
-          <!-- 人机交互模式：缩略图行 -->
-          <div
-            v-if="
-              learningMode === 'chat' &&
-              pdfCards.length > 0 &&
-              currentCardPages > 0
-            "
-            class="thumb-strip"
-          >
-            <div class="ts-scroll">
-              <div
-                v-for="(thumb, pi) in pdfCards[currentPdfIndex]?.thumbs || []"
-                :key="pi"
-                class="ts-thumb"
-                :class="{ active: pi === currentPageIndex }"
-                @click="gotoPage(pi)"
-              >
-                <canvas
-                  :ref="(el) => setThumbCanvas(el, pi)"
-                  class="ts-canvas"
-                />
-                <span class="ts-page">{{ pi + 1 }}</span>
-              </div>
-              <div
-                v-if="(pdfCards[currentPdfIndex]?.thumbs || []).length === 0"
-                class="ts-thumb ts-loading"
-              >
-                <div class="ts-spinner" />
-              </div>
-            </div>
-          </div>
-
-          <!-- 人机交互模式：底部选卡栏 -->
-          <div
-            v-if="learningMode === 'chat' && pdfCards.length > 0"
-            class="card-selector"
-          >
-            <div class="cs-scroll">
-              <div
-                v-for="(card, i) in pdfCards"
-                :key="card.fileId"
-                class="cs-item"
-                :class="{ active: i === currentPdfIndex }"
-                @click="selectCard(i)"
-              >
-                <span class="cs-dot" />
-                <span class="cs-label">{{ card.title }}</span>
-                <span v-if="card.thumbs" class="cs-pages"
-                  >{{ card.thumbs.length }}页</span
-                >
-              </div>
-            </div>
-          </div>
-
-          <!-- AI主导模式：章节选择条 -->
-          <div
-            v-if="learningMode === 'immersive' && imChapters.length > 0"
-            class="card-selector"
-          >
-            <div class="cs-scroll">
-              <div
-                v-for="(ch, i) in imChapters"
-                :key="ch.chapter_id"
-                class="cs-item"
-                :class="{ active: i === imCurrentChapterIndex }"
-                @click="imSelectChapter(i)"
-              >
-                <span class="cs-dot" :class="{ done: ch.pdf_exists }" />
-                <span class="cs-label">{{ ch.title }}</span>
-                <span v-if="ch.audio_files?.length" class="cs-pages"
-                  >🔊{{ ch.audio_files.length }}</span
-                >
-              </div>
-              <div
-                v-if="imGenerating && imGeneratingChapterTitle"
-                class="cs-item generating"
-              >
-                <span class="gen-pulse" style="width: 6px; height: 6px" />
-                <span class="cs-label">{{ imGeneratingChapterTitle }}</span>
+                </template>
               </div>
             </div>
           </div>
@@ -594,807 +568,296 @@
           class="chat-panel"
           :style="chatWidth ? { width: chatWidth + 'px' } : { width: '45%' }"
         >
-          <!-- ═══ 人机交互模式：对话区 ═══ -->
-          <template v-if="learningMode === 'chat'">
-            <!-- Agent 顶栏 -->
-            <div class="agent-topbar">
-              <div class="at-agent">
-                <div class="at-avatar-wrap">
-                  <div
-                    class="at-avatar-ring"
-                    :class="{ active: isThinking || phase === 'generating' }"
+          <!-- 对话区 -->
+          <!-- Agent 顶栏 -->
+          <div class="agent-topbar">
+            <div class="at-agent">
+              <div class="at-logo-avatar">
+                <img src="/logo.png" alt="AI" />
+              </div>
+              <div>
+                <div class="at-name">智流辅导 Agent</div>
+                <div class="at-status">
+                  <span
+                    class="at-dot"
+                    :class="{
+                      thinking: isThinking || phase === 'generating',
+                    }"
                   />
-                  <div class="agent-avatar" style="width: 34px; height: 34px">
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="white"
-                      stroke-width="2"
-                    >
-                      <path d="M12 2a10 10 0 100 20A10 10 0 0012 2z" />
-                      <path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3" />
-                      <line x1="12" y1="17" x2="12.01" y2="17" />
-                    </svg>
-                  </div>
-                </div>
-                <div>
-                  <div class="at-name">智流辅导 Agent</div>
-                  <div class="at-status">
-                    <span
-                      class="at-dot"
-                      :class="{
-                        thinking: isThinking || phase === 'generating',
-                      }"
-                    />
-                    {{
-                      phase === "generating"
-                        ? "正在生成卡片..."
-                        : isThinking
-                          ? "正在思考..."
-                          : "在线"
-                    }}
-                  </div>
+                  {{
+                    phase === "generating"
+                      ? "正在生成卡片..."
+                      : isThinking
+                        ? "正在思考..."
+                        : "在线"
+                  }}
                 </div>
               </div>
             </div>
+          </div>
 
-            <!-- 上下文条 -->
+          <!-- 上下文条 -->
+          <div
+            v-if="
+              cards.filter((c) => !c.loading).length > 0 && phase === 'learning'
+            "
+            class="context-strip"
+          >
+            <span>{{
+              { html: "📄", viz: "🎮", quiz: "❓" }[currentCard?.cardType] ||
+              "📄"
+            }}</span>
+            <span class="cs-title">{{ currentCard?.title }}</span>
+            <span class="cs-hint">针对当前卡片提问</span>
+          </div>
+
+          <!-- 消息流 -->
+          <div ref="messagesRef" class="messages-flow">
             <div
-              v-if="pdfCards.length > 0 && phase === 'learning'"
-              class="context-strip"
+              v-if="messages.length === 0 && phase === 'learning'"
+              class="welcome-flow"
             >
-              <span>📄</span>
-              <span class="cs-title">{{
-                pdfCards[currentPdfIndex]?.title
-              }}</span>
-              <span class="cs-hint">针对当前卡片提问</span>
-            </div>
-
-            <!-- 消息流 -->
-            <div ref="messagesRef" class="messages-flow">
-              <div
-                v-if="messages.length === 0 && phase === 'learning'"
-                class="welcome-flow"
-              >
-                <p class="wf-text">
-                  卡片已生成！有任何疑问随时问我，<br />我会结合<strong>当前卡片内容</strong>来解答。
-                </p>
-                <div class="quick-list">
-                  <button
-                    v-for="q in contextQuicks"
-                    :key="q"
-                    class="quick-item"
-                    @click="sendMessage(q)"
-                  >
-                    {{ q }}
-                  </button>
-                </div>
-              </div>
-              <template v-else>
-                <div
-                  v-for="(msg, i) in messages"
-                  :key="i"
-                  class="msg-row"
-                  :class="msg.role"
+              <p class="wf-text">
+                卡片已生成！有任何疑问随时问我，<br />我会结合<strong>当前卡片内容</strong>来解答。
+              </p>
+              <div class="quick-list">
+                <button
+                  v-for="q in contextQuicks"
+                  :key="q"
+                  class="quick-item"
+                  @click="sendMessage(q)"
                 >
-                  <div v-if="msg.role === 'assistant'" class="msg-av">
-                    <div class="agent-avatar" style="width: 24px; height: 24px">
+                  {{ q }}
+                </button>
+              </div>
+            </div>
+            <template v-else>
+              <div
+                v-for="(msg, i) in messages"
+                :key="i"
+                class="msg-row"
+                :class="msg.role"
+              >
+                <div v-if="msg.role === 'assistant'" class="msg-av">
+                  <div class="agent-avatar msg-agent-avatar">
+                    <img src="/logo.png" alt="AI" />
+                  </div>
+                </div>
+                <div class="msg-col">
+                  <div class="msg-bubble" :class="msg.role">
+                    <div v-if="msg.thinking" class="typing-dots">
+                      <span /><span /><span />
+                    </div>
+                    <template v-else>
+                      <!-- ══ 执行步骤块 ══ -->
+                      <div
+                        v-if="msg.stepBlocks && msg.stepBlocks.length"
+                        class="msg-step-blocks"
+                      >
+                        <div
+                          v-for="blk in msg.stepBlocks"
+                          :key="blk.step"
+                          class="msb-block"
+                        >
+                          <!-- Think 块 -->
+                          <ThinkBlock
+                            v-if="blk.think"
+                            :think="blk.think"
+                            @set-ref="(el) => setThinkRef(blk.step, el)"
+                          />
+
+                          <!-- ToolCall 块列表（同一 step 可能并行多个） -->
+                          <ToolCallBlock
+                            v-for="tc in blk.toolCalls"
+                            :key="tc.id"
+                            :tc="tc"
+                            @set-args-ref="(el) => setArgsRef(tc.id, el)"
+                            @set-logs-ref="(el) => setLogsRef(tc.id, el)"
+                          />
+                        </div>
+                      </div>
+
+                      <!-- 正文 -->
+                      <div
+                        v-if="msg.content"
+                        class="msg-text"
+                        :class="{ 'msg-text--ready': msg.ready }"
+                        v-html="msg.html || msg.content"
+                      />
+                      <!-- 业务事件标签 -->
+                      <div
+                        v-if="msg.events && msg.events.length"
+                        class="msg-events"
+                      >
+                        <span
+                          v-for="(ev, ei) in msg.events"
+                          :key="ei"
+                          class="me-tag"
+                          :class="ev.type"
+                          :style="
+                            ev.type === 'node_created' ||
+                            ev.type === 'node_exists'
+                              ? 'cursor:pointer'
+                              : ''
+                          "
+                          @click="
+                            ev.type === 'node_created' ||
+                            ev.type === 'node_exists'
+                              ? $router.push('/graph')
+                              : null
+                          "
+                        >
+                          <template v-if="ev.type === 'node_created'"
+                            >🧠 新节点：{{ ev.title }}</template
+                          >
+                          <template v-else-if="ev.type === 'node_exists'"
+                            >🧠 节点已存在：{{ ev.title }}</template
+                          >
+                          <template v-else-if="ev.type === 'file_created'"
+                            >📄 生成文件</template
+                          >
+                          <template v-else-if="ev.type === 'mastery_updated'"
+                            >📈 掌握度 +{{
+                              (ev.delta * 100).toFixed(0)
+                            }}%</template
+                          >
+                        </span>
+                      </div>
+                    </template>
+                  </div>
+                  <div class="msg-meta">
+                    <span v-if="msg.newCard" class="msg-card-tag">
                       <svg
-                        width="10"
-                        height="10"
+                        width="9"
+                        height="9"
                         viewBox="0 0 24 24"
                         fill="none"
-                        stroke="white"
-                        stroke-width="2.5"
+                        stroke="currentColor"
+                        stroke-width="2"
                       >
-                        <path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3" />
-                        <line x1="12" y1="17" x2="12.01" y2="17" />
+                        <rect x="3" y="3" width="18" height="18" rx="2" />
                       </svg>
-                    </div>
-                  </div>
-                  <div class="msg-col">
-                    <div class="msg-bubble" :class="msg.role">
-                      <div v-if="msg.thinking" class="typing-dots">
-                        <span /><span /><span />
-                      </div>
-                      <template v-else>
-                        <!-- 工具调用进度 -->
-                        <div
-                          v-if="msg.steps && msg.steps.length"
-                          class="msg-steps"
-                        >
-                          <div
-                            v-for="(s, si) in msg.steps"
-                            :key="si"
-                            class="ms-item"
-                            :class="s.status"
-                          >
-                            <span class="ms-icon">
-                              <svg
-                                v-if="s.status === 'done'"
-                                width="10"
-                                height="10"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                stroke-width="3"
-                              >
-                                <polyline points="20 6 9 17 4 12" />
-                              </svg>
-                              <span
-                                v-else-if="s.status === 'running'"
-                                class="ms-spin"
-                              />
-                              <svg
-                                v-else
-                                width="10"
-                                height="10"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                stroke-width="2"
-                              >
-                                <circle cx="12" cy="12" r="10" />
-                              </svg>
-                            </span>
-                            <span class="ms-label">{{ s.label }}</span>
-                          </div>
-                        </div>
-                        <!-- 正文 -->
-                        <div
-                          v-if="msg.content"
-                          class="msg-text"
-                          v-html="msg.html || msg.content"
-                        />
-                        <!-- 业务事件标签 -->
-                        <div
-                          v-if="msg.events && msg.events.length"
-                          class="msg-events"
-                        >
-                          <span
-                            v-for="(ev, ei) in msg.events"
-                            :key="ei"
-                            class="me-tag"
-                            :class="ev.type"
-                            :style="
-                              ev.type === 'node_created' ||
-                              ev.type === 'node_exists'
-                                ? 'cursor:pointer'
-                                : ''
-                            "
-                            @click="
-                              ev.type === 'node_created' ||
-                              ev.type === 'node_exists'
-                                ? $router.push('/graph')
-                                : null
-                            "
-                          >
-                            <template v-if="ev.type === 'node_created'"
-                              >🧠 新节点：{{ ev.title }}</template
-                            >
-                            <template v-else-if="ev.type === 'node_exists'"
-                              >🧠 节点已存在：{{ ev.title }}</template
-                            >
-                            <template v-else-if="ev.type === 'file_created'"
-                              >📄 生成文件</template
-                            >
-                            <template v-else-if="ev.type === 'mastery_updated'"
-                              >📈 掌握度 +{{
-                                (ev.delta * 100).toFixed(0)
-                              }}%</template
-                            >
-                          </span>
-                        </div>
-                      </template>
-                    </div>
-                    <div class="msg-meta">
-                      <span v-if="msg.newCard" class="msg-card-tag">
-                        <svg
-                          width="9"
-                          height="9"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="2"
-                        >
-                          <rect x="3" y="3" width="18" height="18" rx="2" />
-                        </svg>
-                        新卡片：{{ msg.newCard }}
-                      </span>
-                      <span class="msg-time">{{ msg.time }}</span>
-                    </div>
-                  </div>
-                  <div v-if="msg.role === 'user'" class="msg-av user-av">
-                    <div
-                      class="avatar"
-                      style="
-                        width: 24px;
-                        height: 24px;
-                        font-size: 10px;
-                        font-weight: 700;
-                      "
-                    >
-                      {{ userInitial }}
-                    </div>
+                      新卡片：{{ msg.newCard }}
+                    </span>
+                    <span class="msg-time">{{ msg.time }}</span>
                   </div>
                 </div>
-              </template>
-            </div>
+                <div v-if="msg.role === 'user'" class="msg-av user-av">
+                  <div class="user-avatar">
+                    {{ userInitial }}
+                  </div>
+                </div>
+              </div>
+            </template>
+          </div>
 
-            <!-- 快捷提问 -->
-            <div
-              v-if="phase === 'learning' && messages.length > 0"
-              class="quick-bar"
+          <!-- 快捷提问 -->
+          <div
+            v-if="phase === 'learning' && messages.length > 0"
+            class="quick-bar"
+          >
+            <button
+              v-for="q in contextQuicks.slice(0, 2)"
+              :key="q"
+              class="qb-chip"
+              @click="sendMessage(q)"
             >
+              {{ q }}
+            </button>
+            <button class="qb-chip" @click="sendMessage('给一个可视化例子')">
+              给一个可视化例子
+            </button>
+          </div>
+
+          <!-- 输入区 -->
+          <div class="input-zone">
+            <!-- Quiz 锁定提示 -->
+            <Transition name="quiz-toast">
+              <div v-if="quizLockToast" class="quiz-lock-toast">
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="8" x2="12" y2="12" />
+                  <line x1="12" y1="16" x2="12.01" y2="16" />
+                </svg>
+                还有
+                {{
+                  [...pendingQuizBatch.values()].filter((i) => !i.answered)
+                    .length
+                }}
+                道练习题未完成，请先作答
+              </div>
+            </Transition>
+            <div
+              class="iz-input-wrap"
+              :class="{
+                focused: inputFocused,
+                'quiz-locked': hasUnansweredQuiz,
+              }"
+            >
+              <textarea
+                ref="inputBox"
+                v-model="inputText"
+                class="iz-input"
+                :placeholder="
+                  isGenerating || phase === 'generating'
+                    ? 'Agent 正在生成，请稍候...'
+                    : hasUnansweredQuiz
+                      ? '请先完成上方的练习题...'
+                      : '问我任何学习问题...'
+                "
+                :disabled="
+                  isGenerating || phase === 'generating' || hasUnansweredQuiz
+                "
+                rows="1"
+                @keydown.enter.exact.prevent="
+                  hasUnansweredQuiz
+                    ? showQuizLockToast()
+                    : sendMessage(inputText)
+                "
+                @input="autoResize"
+                @focus="
+                  hasUnansweredQuiz
+                    ? (showQuizLockToast(), $event.target.blur())
+                    : (inputFocused = true)
+                "
+                @blur="inputFocused = false"
+              />
               <button
-                v-for="q in contextQuicks.slice(0, 2)"
-                :key="q"
-                class="qb-chip"
-                @click="sendMessage(q)"
+                class="iz-send"
+                :class="{
+                  active:
+                    inputText.trim() &&
+                    phase !== 'generating' &&
+                    !hasUnansweredQuiz,
+                }"
+                @click="
+                  hasUnansweredQuiz
+                    ? showQuizLockToast()
+                    : sendMessage(inputText)
+                "
               >
-                {{ q }}
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2.5"
+                >
+                  <line x1="22" y1="2" x2="11" y2="13" />
+                  <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                </svg>
               </button>
             </div>
-
-            <!-- 输入区 -->
-            <div class="input-zone">
-              <div class="iz-input-wrap" :class="{ focused: inputFocused }">
-                <textarea
-                  ref="inputBox"
-                  v-model="inputText"
-                  class="iz-input"
-                  :placeholder="
-                    isGenerating || phase === 'generating'
-                      ? 'Agent 正在生成，请稍候...'
-                      : '问我任何学习问题...'
-                  "
-                  :disabled="isGenerating || phase === 'generating'"
-                  rows="1"
-                  @keydown.enter.exact.prevent="sendMessage(inputText)"
-                  @input="autoResize"
-                  @focus="inputFocused = true"
-                  @blur="inputFocused = false"
-                />
-                <button
-                  class="iz-send"
-                  :class="{
-                    active: inputText.trim() && phase !== 'generating',
-                  }"
-                  @click="sendMessage(inputText)"
-                >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2.5"
-                  >
-                    <line x1="22" y1="2" x2="11" y2="13" />
-                    <polygon points="22 2 15 22 11 13 2 9 22 2" />
-                  </svg>
-                </button>
-              </div>
-              <div class="iz-hint">Enter 发送 · Shift+Enter 换行</div>
-            </div>
-          </template>
-
-          <!-- ═══ AI主导模式：大纲 + 习题 + 日志 ═══ -->
-          <template v-else>
-            <div class="im-sidebar-inner">
-              <div class="im-tabs">
-                <button
-                  :class="{ active: imTab === 'outline' }"
-                  @click="imTab = 'outline'"
-                >
-                  📋 大纲
-                </button>
-                <button
-                  :class="{ active: imTab === 'exercises' }"
-                  @click="imTab = 'exercises'"
-                >
-                  ✏️ 习题
-                </button>
-                <button
-                  :class="{ active: imTab === 'agent' }"
-                  @click="imTab = 'agent'"
-                >
-                  🤖 智流Agent
-                  <span v-if="imAgentMessages.length" class="im-log-count">{{
-                    imAgentMessages.length
-                  }}</span>
-                </button>
-                <button
-                  :class="{ active: imTab === 'log' }"
-                  @click="imTab = 'log'"
-                >
-                  📝 日志
-                  <span v-if="imLogs.length" class="im-log-count">{{
-                    imLogs.length
-                  }}</span>
-                </button>
-              </div>
-              <div class="im-tab-content">
-                <!-- 大纲 -->
-                <div v-if="imTab === 'outline'" class="im-outline">
-                  <div v-if="!imOutline" class="im-placeholder">
-                    大纲生成中...
-                  </div>
-                  <template v-else>
-                    <h3
-                      style="
-                        font-size: 16px;
-                        font-weight: 700;
-                        color: var(--text-primary);
-                        margin: 0 0 8px;
-                      "
-                    >
-                      {{ imOutline.topic }}
-                    </h3>
-                    <p
-                      style="
-                        font-size: 13px;
-                        color: var(--text-secondary);
-                        line-height: 1.7;
-                        margin-bottom: 16px;
-                      "
-                    >
-                      {{ imOutline.overview }}
-                    </p>
-                    <div
-                      v-for="ch in imOutline.chapters"
-                      :key="ch.chapter_id"
-                      style="
-                        padding: 10px 0;
-                        border-top: 1px solid var(--border);
-                      "
-                    >
-                      <div
-                        style="
-                          font-size: 13px;
-                          font-weight: 600;
-                          color: var(--text-primary);
-                          margin-bottom: 4px;
-                        "
-                      >
-                        {{
-                          isImChapterDone(ch.chapter_id)
-                            ? "✅"
-                            : isImChapterCurrent(ch.chapter_id)
-                              ? "⏳"
-                              : "○"
-                        }}
-                        {{ ch.title }}
-                      </div>
-                      <div
-                        style="
-                          font-size: 12px;
-                          color: var(--text-muted);
-                          margin-bottom: 6px;
-                        "
-                      >
-                        {{ ch.description }}
-                      </div>
-                      <div style="display: flex; flex-wrap: wrap; gap: 4px">
-                        <span
-                          v-for="kp in ch.knowledge_points"
-                          :key="kp"
-                          style="
-                            font-size: 10px;
-                            padding: 2px 7px;
-                            border-radius: 4px;
-                            background: var(--brand-dim);
-                            color: var(--brand-light);
-                            border: 1px solid rgba(99, 102, 241, 0.15);
-                          "
-                          >{{ kp }}</span
-                        >
-                      </div>
-                    </div>
-                  </template>
-                </div>
-
-                <!-- 习题（美化版：逐题显示 + 统一AI判分） -->
-                <div v-if="imTab === 'exercises'" class="im-exercises">
-                  <div
-                    v-if="!imCurrentChapter?.exercises_exists"
-                    class="im-placeholder"
-                  >
-                    {{
-                      imChapters.length > 0 ? "本章暂无习题" : "等待课件生成..."
-                    }}
-                  </div>
-                  <div v-else class="im-quiz-container">
-                    <!-- 未提交：逐题作答模式 -->
-                    <template v-if="!imQuizSubmitted">
-                      <!-- 顶部进度条 -->
-                      <div class="imq-progress-bar">
-                        <div class="imq-progress-dots">
-                          <div
-                            v-for="(q, i) in imParsedQuizzes"
-                            :key="i"
-                            class="imq-dot"
-                            :class="{
-                              active: i === imQuizCurrent,
-                              answered:
-                                q.userAnswer !== null || q.userText.trim(),
-                            }"
-                            @click="imQuizCurrent = i"
-                          >
-                            {{ i + 1 }}
-                          </div>
-                        </div>
-                        <div class="imq-progress-text">
-                          {{ imQuizAnsweredCount }} /
-                          {{ imParsedQuizzes.length }} 已作答
-                        </div>
-                      </div>
-
-                      <!-- 当前题目卡片 -->
-                      <div v-if="imParsedQuizzes.length > 0" class="imq-card">
-                        <div class="imq-card-header">
-                          <span
-                            class="imq-card-type"
-                            :class="
-                              currentQuiz?.type === 'choice'
-                                ? 'choice'
-                                : currentQuiz?.type === 'fill'
-                                  ? 'fill'
-                                  : 'text'
-                            "
-                          >
-                            {{
-                              currentQuiz?.type === "choice"
-                                ? "选择题"
-                                : currentQuiz?.type === "fill"
-                                  ? "填空题"
-                                  : "简答题"
-                            }}
-                          </span>
-                          <span class="imq-card-section">{{
-                            currentQuiz?.sectionTitle || ""
-                          }}</span>
-                          <span class="imq-card-num"
-                            >第 {{ imQuizCurrent + 1 }} /
-                            {{ imParsedQuizzes.length }} 题</span
-                          >
-                        </div>
-                        <div
-                          class="imq-card-question"
-                          v-html="renderMd(currentQuiz?.question || '')"
-                        />
-
-                        <!-- 选择题选项 -->
-                        <div
-                          v-if="
-                            currentQuiz?.type === 'choice' &&
-                            currentQuiz?.options?.length > 0
-                          "
-                          class="imq-card-options"
-                        >
-                          <div
-                            v-for="(opt, oi) in currentQuiz.options"
-                            :key="oi"
-                            class="imq-card-opt"
-                            :class="{ selected: currentQuiz.userAnswer === oi }"
-                            @click="currentQuiz.userAnswer = oi"
-                          >
-                            <span
-                              class="imq-card-opt-letter"
-                              :class="{
-                                selected: currentQuiz.userAnswer === oi,
-                              }"
-                              >{{
-                                currentQuiz.optionLabels?.[oi] ||
-                                String.fromCharCode(65 + oi)
-                              }}</span
-                            >
-                            <span
-                              class="imq-card-opt-text"
-                              v-html="renderMd(opt)"
-                            />
-                          </div>
-                        </div>
-
-                        <!-- 填空/简答题输入 -->
-                        <div v-else class="imq-card-input">
-                          <textarea
-                            v-model="currentQuiz.userText"
-                            :placeholder="
-                              currentQuiz?.type === 'fill'
-                                ? '填入答案（多个空用逗号分隔）...'
-                                : '请详细作答...'
-                            "
-                            :rows="currentQuiz?.type === 'fill' ? 2 : 5"
-                          />
-                        </div>
-
-                        <!-- 翻页按钮 -->
-                        <div class="imq-card-nav">
-                          <button
-                            class="imq-nav-btn"
-                            :disabled="imQuizCurrent <= 0"
-                            @click="imQuizCurrent--"
-                          >
-                            ← 上一题
-                          </button>
-                          <button
-                            v-if="imQuizCurrent < imParsedQuizzes.length - 1"
-                            class="imq-nav-btn primary"
-                            @click="imQuizCurrent++"
-                          >
-                            下一题 →
-                          </button>
-                          <button
-                            v-else
-                            class="imq-nav-btn submit"
-                            :disabled="
-                              imQuizAnsweredCount < imParsedQuizzes.length ||
-                              imQuizJudging
-                            "
-                            @click="submitAllQuizzes"
-                          >
-                            {{
-                              imQuizJudging
-                                ? "🤖 AI 判题中..."
-                                : "📝 提交全部，AI 统一判分"
-                            }}
-                          </button>
-                        </div>
-                        <!-- 还没做完时的提示 -->
-                        <div
-                          v-if="
-                            imQuizCurrent === imParsedQuizzes.length - 1 &&
-                            imQuizAnsweredCount < imParsedQuizzes.length
-                          "
-                          class="imq-unanswered-hint"
-                        >
-                          还有
-                          {{ imParsedQuizzes.length - imQuizAnsweredCount }}
-                          题未作答，请完成后提交
-                        </div>
-                      </div>
-                    </template>
-
-                    <!-- 已提交：判分结果页 -->
-                    <template v-else>
-                      <div class="imq-result">
-                        <!-- 总分概览 -->
-                        <div class="imq-result-summary">
-                          <div
-                            class="imq-score-circle"
-                            :class="imQuizScoreLevel"
-                          >
-                            <span class="imq-score-num">{{
-                              imQuizStats.correct
-                            }}</span>
-                            <span class="imq-score-total"
-                              >/ {{ imParsedQuizzes.length }}</span
-                            >
-                          </div>
-                          <div class="imq-score-label">
-                            {{
-                              imQuizScoreLevel === "great"
-                                ? "🎉 太棒了！"
-                                : imQuizScoreLevel === "good"
-                                  ? "👍 不错！"
-                                  : "💪 继续加油！"
-                            }}
-                          </div>
-                          <div class="imq-score-bar">
-                            <span class="imq-stat correct"
-                              >✅ {{ imQuizStats.correct }} 正确</span
-                            >
-                            <span class="imq-stat wrong"
-                              >❌ {{ imQuizStats.wrong }} 错误</span
-                            >
-                          </div>
-                        </div>
-
-                        <!-- 每题详细分析 -->
-                        <div class="imq-result-list">
-                          <div
-                            v-for="(q, qi) in imParsedQuizzes"
-                            :key="qi"
-                            class="imq-result-item"
-                            :class="{
-                              correct: q.judgeResult === true,
-                              wrong: q.judgeResult === false,
-                            }"
-                          >
-                            <div class="imq-result-num">
-                              <span
-                                :class="
-                                  q.judgeResult ? 'icon-correct' : 'icon-wrong'
-                                "
-                                >{{ q.judgeResult ? "✅" : "❌" }}</span
-                              >
-                              第 {{ qi + 1 }} 题
-                            </div>
-                            <div
-                              class="imq-result-question"
-                              v-html="renderMd(q.question)"
-                            />
-                            <div class="imq-result-answer">
-                              <span class="label">你的答案：</span>
-                              <span class="value">{{
-                                typeof q.userAnswer === "number"
-                                  ? (q.optionLabels?.[q.userAnswer] ||
-                                      String.fromCharCode(65 + q.userAnswer)) +
-                                    ". " +
-                                    (q.options?.[q.userAnswer] || "")
-                                  : q.userText || "未作答"
-                              }}</span>
-                            </div>
-                            <div
-                              v-if="q.judgeResult === false && q.answer"
-                              class="imq-result-correct"
-                            >
-                              <span class="label">正确答案：</span>
-                              <span class="value">{{ q.answer }}</span>
-                            </div>
-                            <div
-                              v-if="q.feedback"
-                              class="imq-result-feedback"
-                              v-html="renderMd(q.feedback)"
-                            />
-                          </div>
-                        </div>
-
-                        <!-- AI 综合学习建议 -->
-                        <div v-if="imQuizAdvice" class="imq-result-advice">
-                          <div class="imq-advice-title">📚 AI 学习建议</div>
-                          <div
-                            class="imq-advice-content"
-                            v-html="renderMd(imQuizAdvice)"
-                          />
-                        </div>
-
-                        <!-- 重做按钮 -->
-                        <button class="imq-retry-btn" @click="retryQuiz">
-                          🔄 重新做题
-                        </button>
-                      </div>
-                    </template>
-
-                    <!-- 无法解析时 fallback 到原始 markdown -->
-                    <div
-                      v-if="imParsedQuizzes.length === 0 && imExercisesHtml"
-                      class="im-ex-content"
-                      v-html="imExercisesHtml"
-                    />
-                  </div>
-                </div>
-
-                <!-- 智流 Agent 对话 -->
-                <div v-if="imTab === 'agent'" class="im-agent-chat">
-                  <div ref="imAgentMsgRef" class="im-agent-messages">
-                    <div
-                      v-if="imAgentMessages.length === 0"
-                      class="im-agent-welcome"
-                    >
-                      <div class="im-agent-welcome-icon">🤖</div>
-                      <div class="im-agent-welcome-title">智流 Agent</div>
-                      <div class="im-agent-welcome-desc">
-                        有任何关于课程内容的问题，随时问我！
-                      </div>
-                      <div class="im-agent-quick-list">
-                        <button
-                          class="im-agent-quick"
-                          @click="sendImAgentMsg('帮我总结当前章节的要点')"
-                        >
-                          📝 总结当前章节
-                        </button>
-                        <button
-                          class="im-agent-quick"
-                          @click="sendImAgentMsg('这个知识点有什么实际应用？')"
-                        >
-                          🔍 实际应用场景
-                        </button>
-                        <button
-                          class="im-agent-quick"
-                          @click="sendImAgentMsg('帮我出几道练习题测试一下')"
-                        >
-                          ✏️ 出练习题
-                        </button>
-                      </div>
-                    </div>
-                    <div
-                      v-for="(m, mi) in imAgentMessages"
-                      :key="mi"
-                      class="im-agent-msg"
-                      :class="m.role"
-                    >
-                      <div
-                        v-if="m.role === 'assistant'"
-                        class="im-agent-msg-av"
-                      >
-                        <div
-                          class="agent-avatar"
-                          style="width: 22px; height: 22px"
-                        >
-                          <svg
-                            width="9"
-                            height="9"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="white"
-                            stroke-width="2.5"
-                          >
-                            <path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3" />
-                            <line x1="12" y1="17" x2="12.01" y2="17" />
-                          </svg>
-                        </div>
-                      </div>
-                      <div class="im-agent-msg-bubble" :class="m.role">
-                        <div v-if="m.thinking" class="typing-dots">
-                          <span /><span /><span />
-                        </div>
-                        <div
-                          v-else
-                          class="msg-text"
-                          v-html="m.html || m.content"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                  <div class="im-agent-input-zone">
-                    <div class="im-agent-input-wrap">
-                      <textarea
-                        v-model="imAgentInput"
-                        class="im-agent-input"
-                        placeholder="问我关于课程内容的问题..."
-                        :disabled="imAgentGenerating"
-                        rows="1"
-                        @keydown.enter.exact.prevent="
-                          sendImAgentMsg(imAgentInput)
-                        "
-                        @input="
-                          (e) => {
-                            e.target.style.height = 'auto';
-                            e.target.style.height =
-                              Math.min(e.target.scrollHeight, 80) + 'px';
-                          }
-                        "
-                      />
-                      <button
-                        class="im-agent-send"
-                        :class="{ active: imAgentInput.trim() }"
-                        @click="sendImAgentMsg(imAgentInput)"
-                      >
-                        <svg
-                          width="12"
-                          height="12"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="2.5"
-                        >
-                          <line x1="22" y1="2" x2="11" y2="13" />
-                          <polygon points="22 2 15 22 11 13 2 9 22 2" />
-                        </svg>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                <!-- 日志 -->
-                <div v-if="imTab === 'log'" ref="imLogRef" class="im-log">
-                  <div
-                    v-for="(log, i) in imLogs"
-                    :key="i"
-                    class="im-log-item"
-                    :class="log.level"
-                  >
-                    <span class="im-log-time">{{ log.time }}</span>
-                    <span class="im-log-msg">{{ log.message }}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </template>
+            <div class="iz-hint">Enter 发送 · Shift+Enter 换行</div>
+          </div>
         </div>
       </div>
     </transition>
@@ -1430,69 +893,19 @@
 </template>
 
 <script setup>
-import { ref, computed, nextTick, onMounted, onUnmounted, watch } from "vue";
+import { ref, computed, nextTick, onMounted, onUnmounted } from "vue";
 import { useRoute, onBeforeRouteLeave } from "vue-router";
-import { sessionApi, BASE_URL } from "@/api";
-import { authHeaders, fetchAsBlobUrl } from "@/api/base.js";
-import { api } from "@/api/base.js";
+import { sessionApi, api } from "@/api";
 import { useAuth } from "@/composables/useAuth.js";
+import ThinkBlock from "@/components/chat/ThinkBlock.vue";
+import ToolCallBlock from "@/components/chat/ToolCallBlock.vue";
+import HtmlCard from "@/components/HtmlCard/HtmlCard.vue";
+import VizCard from "@/components/VizCard/VizCard.vue";
+import { QuizCard } from "@/components/QuizCard/index.js";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import katex from "katex";
 import "katex/dist/katex.min.css";
-import * as pdfjsLib from "pdfjs-dist/webpack.mjs";
-import { PDFDocument } from "pdf-lib";
-
-// 使用 npm 包内嵌的 Worker 方案，webpack.mjs 会自动配置 Worker
-// 配置 PDF.js 字体支持
-pdfjsLib.GlobalWorkerOptions.fontFamily =
-  "'PingFang SC', 'Noto Sans CJK SC', 'Source Han Sans SC', 'FandolSong-Regular', 'Droid Sans Fallback', 'SimSun', 'Microsoft YaHei', sans-serif";
-
-// 强制PDF.js使用系统字体渲染
-pdfjsLib.GlobalWorkerOptions.useSystemFonts = true;
-
-// 配置CMap用于中文字符映射
-pdfjsLib.GlobalWorkerOptions.cMapUrl =
-  "https://unpkg.com/pdfjs-dist@5.6.205/cmaps/";
-pdfjsLib.GlobalWorkerOptions.cMapPacked = true;
-
-// 添加字体映射配置，确保中文字体正确显示
-if (typeof window !== "undefined") {
-  document.addEventListener("DOMContentLoaded", () => {
-    // 为PDF canvas添加字体样式
-    const style = document.createElement("style");
-    style.textContent = `
-      .pdf-main-canvas, .ts-canvas {
-        font-family: 'PingFang SC', 'Noto Sans CJK SC', 'Source Han Sans SC',
-                     'FandolSong-Regular', 'Droid Sans Fallback', 'SimSun',
-                     'Microsoft YaHei', sans-serif !important;
-      }
-
-      /* 确保文本层使用正确字体 */
-      .textLayer {
-        font-family: 'PingFang SC', 'Noto Sans CJK SC', 'Source Han Sans SC',
-                     'FandolSong-Regular', 'Droid Sans Fallback', 'SimSun',
-                     'Microsoft YaHei', sans-serif !important;
-      }
-    `;
-    document.head.appendChild(style);
-
-    // 预加载常用中文字体
-    const fonts = [
-      "PingFang SC",
-      "Noto Sans CJK SC",
-      "Source Han Sans SC",
-      "Microsoft YaHei",
-      "SimSun",
-    ];
-
-    fonts.forEach((font) => {
-      if (document.fonts.check(`12px "${font}"`)) {
-        console.log(`字体 ${font} 已可用`);
-      }
-    });
-  });
-}
 
 // 配置 marked
 marked.setOptions({ breaks: true, gfm: true });
@@ -1633,892 +1046,6 @@ const userInitial = computed(() => {
   return name.charAt(0).toUpperCase();
 });
 
-// ── 学习模式 ─────────────────────────────────────────────────────
-// 'chat' = 人机交互学习, 'immersive' = AI 主导学习
-const learningMode = ref("chat");
-
-// ── AI 主导学习：跳转改为本页启动 ────────────────────────────────
-function startImmersive() {
-  if (!topicInput.value.trim()) return;
-  learningMode.value = "immersive";
-  currentTopic.value = topicInput.value.trim();
-  phase.value = "immersive";
-  imStartGenerate();
-}
-
-// ══════════════════════════════════════════════════════════════
-// AI 主导学习（沉浸式）所有状态
-// ══════════════════════════════════════════════════════════════
-const imGenerating = ref(false);
-const imCompleted = ref(false);
-const imProgress = ref(0);
-const imCurrentStage = ref("");
-const imStatusMessage = ref("");
-const imOutline = ref(null);
-const imChapters = ref([]);
-const imCurrentChapterIndex = ref(0);
-const imCurrentPage = ref(1);
-const imTotalPages = ref(0);
-const imTab = ref("log");
-const imLogs = ref([]);
-const imPdfCanvas = ref(null);
-const imLogRef = ref(null);
-const imIsPlaying = ref(false);
-const imExercisesHtml = ref("");
-const imGeneratingChapterId = ref(0);
-const imGeneratingChapterTitle = ref("");
-
-const imPdfDocMap = new Map();
-let imCurrentAudio = null;
-
-// ── 智流 Agent 对话（AI 主导模式内） ─────────────────────────────
-const imAgentMessages = ref([]);
-const imAgentInput = ref("");
-const imAgentGenerating = ref(false);
-const imAgentMsgRef = ref(null);
-
-async function sendImAgentMsg(text) {
-  if (!text || !text.trim() || imAgentGenerating.value) return;
-  imAgentGenerating.value = true;
-  imAgentMessages.value.push({ role: "user", content: text, time: now() });
-  imAgentInput.value = "";
-  await nextTick();
-  if (imAgentMsgRef.value)
-    imAgentMsgRef.value.scrollTop = imAgentMsgRef.value.scrollHeight;
-
-  // thinking 占位
-  imAgentMessages.value.push({
-    role: "assistant",
-    thinking: true,
-    content: "",
-    html: "",
-    time: "",
-  });
-  await nextTick();
-  if (imAgentMsgRef.value)
-    imAgentMsgRef.value.scrollTop = imAgentMsgRef.value.scrollHeight;
-
-  // 构建上下文：当前章节信息 + 大纲
-  const ch = imCurrentChapter.value;
-  const contextInfo = ch
-    ? `当前正在学习「${currentTopic.value}」第${ch.chapter_id}章「${ch.title}」`
-    : `当前正在学习「${currentTopic.value}」`;
-
-  try {
-    // 使用后端 immersive agent chat API（如果有的话），否则用人机交互的 session
-    // 这里复用已有的 session SSE
-    if (currentSessionId.value) {
-      const agentText = `[智流Agent] ${contextInfo}\n\n用户问题：${text}`;
-      const idx = imAgentMessages.value.length - 1;
-      let fullContent = "";
-
-      sessionApi.streamMessage(currentSessionId.value, agentText, {
-        onTextReply: (text) => {
-          fullContent += text;
-          imAgentMessages.value[idx] = {
-            role: "assistant",
-            thinking: false,
-            content: fullContent,
-            html: renderMd(fullContent),
-            time: now(),
-          };
-          if (imAgentMsgRef.value)
-            imAgentMsgRef.value.scrollTop = imAgentMsgRef.value.scrollHeight;
-        },
-        onDone: () => {
-          imAgentMessages.value[idx] = {
-            role: "assistant",
-            thinking: false,
-            content: fullContent,
-            html: renderMd(fullContent),
-            time: now(),
-          };
-          imAgentGenerating.value = false;
-        },
-        onError: (err) => {
-          imAgentMessages.value[idx] = {
-            role: "assistant",
-            thinking: false,
-            content: `连接失败: ${err.message}`,
-            html: `连接失败: ${err.message}`,
-            time: now(),
-          };
-          imAgentGenerating.value = false;
-        },
-      });
-    } else {
-      // 没有 session 时用简单提示
-      const idx = imAgentMessages.value.length - 1;
-      imAgentMessages.value[idx] = {
-        role: "assistant",
-        thinking: false,
-        content: "课程尚未生成完成，请等待课件完成后再提问。",
-        html: "课程尚未生成完成，请等待课件完成后再提问。",
-        time: now(),
-      };
-      imAgentGenerating.value = false;
-    }
-  } catch (e) {
-    const idx = imAgentMessages.value.length - 1;
-    imAgentMessages.value[idx] = {
-      role: "assistant",
-      thinking: false,
-      content: `错误: ${e.message}`,
-      html: `错误: ${e.message}`,
-      time: now(),
-    };
-    imAgentGenerating.value = false;
-  }
-}
-
-// ── 习题交互系统 ────────────────────────────────────────────────
-const imParsedQuizzes = ref([]);
-const imQuizJudging = ref(false);
-const imQuizCurrent = ref(0); // 当前显示第几题
-const imQuizSubmitted = ref(false); // 是否已提交判分
-const imQuizAdvice = ref(""); // AI 综合学习建议
-
-const currentQuiz = computed(
-  () => imParsedQuizzes.value[imQuizCurrent.value] || null,
-);
-
-const imQuizAnsweredCount = computed(() => {
-  return imParsedQuizzes.value.filter(
-    (q) => q.userAnswer !== null || q.userText.trim(),
-  ).length;
-});
-
-const imQuizStats = computed(() => {
-  const qs = imParsedQuizzes.value;
-  return {
-    correct: qs.filter((q) => q.judgeResult === true).length,
-    wrong: qs.filter((q) => q.judgeResult === false).length,
-    pending: qs.filter((q) => q.judgeResult === null).length,
-  };
-});
-
-const imQuizScoreLevel = computed(() => {
-  const total = imParsedQuizzes.value.length;
-  if (total === 0) return "low";
-  const ratio = imQuizStats.value.correct / total;
-  if (ratio >= 0.8) return "great";
-  if (ratio >= 0.5) return "good";
-  return "low";
-});
-
-// 解析习题 markdown 为结构化数据
-function parseExercises(mdText) {
-  if (!mdText) return [];
-  const quizzes = [];
-
-  // ══════════════════════════════════════════════════════════════
-  // 通用解析器：兼容多种 AI 生成的习题格式
-  // 格式1: ## 习题 X：类型题  （旧格式，内含子题）
-  // 格式2: ## 题目 X（类型题）：标题  （每题独立，含 <details>）
-  // 格式3: ## 一、选择题 → ### 1. 题干  （大类 + 子题）
-  // 格式4: ### 题目 X: 选择题  （### 级标题）
-  // 格式5: ### 1. 选择题  （直接编号）
-  // 核心策略：按 <details> 块分割独立题目，自动检测题型
-  // ══════════════════════════════════════════════════════════════
-
-  // ── 辅助函数 ──
-  function detectType(text) {
-    // 有 A/B/C/D 选项 → 选择题
-    if (/(?:^|\n)\s*[A-D][.、)]\s*.+/m.test(text)) return "choice";
-    // 有下划线空位 → 填空题
-    if (/_{2,}/.test(text)) return "fill";
-    // 标题中明确写了类型
-    const header = text.split("\n")[0] || "";
-    if (/选择/.test(header)) return "choice";
-    if (/填空/.test(header)) return "fill";
-    if (/判断/.test(header)) return "choice";
-    return "text"; // 简答 / 综合 / 其他
-  }
-
-  function extractAnswer(detailsContent) {
-    if (!detailsContent) return { answer: "", explanation: "" };
-    const cleaned = detailsContent.replace(/<\/?summary[^>]*>/g, "").trim();
-
-    // 提取答案：**答案：X** 或 答案：X
-    let answer = "";
-    const ansMatch = cleaned.match(
-      /\*{0,2}(?:参考)?答案[：:]\s*\*{0,2}\s*([\s\S]*?)(?=\n\*{0,2}(?:解析|说明)[：:]|\n---|\n\n|$)/i,
-    );
-    if (ansMatch) {
-      answer = ansMatch[1]
-        .trim()
-        .replace(/\*{1,2}/g, "")
-        .trim();
-    }
-
-    // 提取解析
-    let explanation = "";
-    const explMatch = cleaned.match(
-      /\*{0,2}(?:解析|说明)[：:]\s*\*{0,2}\s*([\s\S]*?)$/i,
-    );
-    if (explMatch) {
-      explanation = explMatch[1].trim();
-    }
-    // 如果没有明确的解析标记，用答案后面的所有内容
-    if (!explanation && ansMatch) {
-      const afterAnswer = cleaned
-        .substring(cleaned.indexOf(ansMatch[0]) + ansMatch[0].length)
-        .trim();
-      if (afterAnswer.length > 10) explanation = afterAnswer;
-    }
-    // 兜底：整段作为答案+解析
-    if (!answer && !explanation) {
-      answer = cleaned.length < 200 ? cleaned : cleaned.substring(0, 200);
-      explanation = cleaned;
-    }
-    return { answer, explanation };
-  }
-
-  function extractOptions(questionText) {
-    const opts = [];
-    // 匹配 "A. xxx" / "A、xxx" / "A) xxx" / "- A. xxx"，兼容 **加粗**
-    const optRegex =
-      /(?:^|\n)\s*[-\s]*([A-D])[.、)]\s*\*{0,2}(.+?)\*{0,2}\s*$/gm;
-    let om;
-    while ((om = optRegex.exec(questionText)) !== null) {
-      opts.push({ label: om[1], text: om[2].trim() });
-    }
-    return opts;
-  }
-
-  function extractStem(questionText, opts) {
-    if (opts.length === 0) {
-      // 去掉标题行，剩下就是题干
-      return questionText.replace(/^#{1,4}\s*.+$/m, "").trim();
-    }
-    // 选项之前的部分
-    const firstOptIdx = questionText.search(/(?:^|\n)\s*[-\s]*[A-D][.、)]/);
-    const raw =
-      firstOptIdx > 0 ? questionText.substring(0, firstOptIdx) : questionText;
-    return raw.replace(/^#{1,4}\s*.+$/m, "").trim();
-  }
-
-  function extractTitle(headerLine) {
-    // 从标题行提取题号和类型描述
-    return headerLine.replace(/^#{1,4}\s*/, "").trim();
-  }
-
-  function correctLetterFromAnswer(answerStr) {
-    const m = answerStr.match(/^([A-D])/i);
-    return m ? m[1].toUpperCase() : null;
-  }
-
-  // ── 主逻辑：按 <details> 块分割独立题目 ──
-  // 每个 <details> 对应一道题的答案，它前面的内容就是题目
-  const detailsRegex = /<details[^>]*>([\s\S]*?)<\/details>/gi;
-  const detailsBlocks = [];
-  let dm;
-  while ((dm = detailsRegex.exec(mdText)) !== null) {
-    detailsBlocks.push({
-      index: dm.index,
-      end: dm.index + dm[0].length,
-      content: dm[1],
-    });
-  }
-
-  if (detailsBlocks.length > 0) {
-    // 有 <details> 块：每个块前面的内容是一道题
-    for (let di = 0; di < detailsBlocks.length; di++) {
-      const db = detailsBlocks[di];
-      const prevEnd = di > 0 ? detailsBlocks[di - 1].end : 0;
-      const questionBlock = mdText.substring(prevEnd, db.index).trim();
-      if (!questionBlock || questionBlock.length < 5) continue;
-
-      const type = detectType(questionBlock);
-      const { answer, explanation } = extractAnswer(db.content);
-      const opts = type === "choice" ? extractOptions(questionBlock) : [];
-      const stem = extractStem(questionBlock, opts);
-      const title = extractTitle(
-        (questionBlock.match(/^#{1,4}\s*.+$/m) || [""])[0],
-      );
-
-      if (type === "choice" && opts.length > 0) {
-        const letter = correctLetterFromAnswer(answer);
-        const correctIndex = letter ? letter.charCodeAt(0) - 65 : -1;
-        quizzes.push({
-          sectionTitle: title,
-          subNum: di + 1,
-          question: stem || title,
-          type: "choice",
-          options: opts.map((o) => o.text),
-          optionLabels: opts.map((o) => o.label),
-          answer,
-          correctIndex,
-          explanation,
-          userAnswer: null,
-          userText: "",
-          judgeResult: null,
-          feedback: "",
-        });
-      } else if (type === "fill") {
-        quizzes.push({
-          sectionTitle: title,
-          subNum: di + 1,
-          question: stem || title,
-          type: "fill",
-          options: [],
-          optionLabels: [],
-          answer,
-          correctIndex: -1,
-          explanation,
-          userAnswer: null,
-          userText: "",
-          judgeResult: null,
-          feedback: "",
-        });
-      } else {
-        quizzes.push({
-          sectionTitle: title,
-          subNum: di + 1,
-          question: stem || title,
-          type: "text",
-          options: [],
-          optionLabels: [],
-          answer,
-          correctIndex: -1,
-          explanation,
-          userAnswer: null,
-          userText: "",
-          judgeResult: null,
-          feedback: "",
-        });
-      }
-    }
-  }
-
-  // ── 兜底：没有 <details> 块时，按 ## / ### 标题分割 ──
-  if (quizzes.length === 0) {
-    const headingRegex = /^#{2,3}\s+.+$/gm;
-    const headings = [];
-    let hm;
-    while ((hm = headingRegex.exec(mdText)) !== null) {
-      headings.push({ index: hm.index, text: hm[0] });
-    }
-    for (let hi = 0; hi < headings.length; hi++) {
-      const start = headings[hi].index;
-      const end =
-        hi + 1 < headings.length ? headings[hi + 1].index : mdText.length;
-      const block = mdText.substring(start, end).trim();
-      if (block.length < 20) continue;
-
-      const type = detectType(block);
-      const opts = type === "choice" ? extractOptions(block) : [];
-      const stem = extractStem(block, opts);
-      const title = extractTitle(headings[hi].text);
-      if (!stem || stem.length < 5) continue;
-
-      quizzes.push({
-        sectionTitle: title,
-        subNum: hi + 1,
-        question: stem,
-        type:
-          type === "choice" && opts.length > 0
-            ? "choice"
-            : type === "fill"
-              ? "fill"
-              : "text",
-        options: opts.map((o) => o.text),
-        optionLabels: opts.map((o) => o.label),
-        answer: "",
-        correctIndex: -1,
-        explanation: "",
-        userAnswer: null,
-        userText: "",
-        judgeResult: null,
-        feedback: "",
-      });
-    }
-  }
-
-  return quizzes;
-}
-
-function retryQuiz() {
-  imQuizSubmitted.value = false;
-  imQuizCurrent.value = 0;
-  imQuizAdvice.value = "";
-  for (const q of imParsedQuizzes.value) {
-    q.userAnswer = null;
-    q.userText = "";
-    q.judgeResult = null;
-    q.feedback = "";
-  }
-}
-
-async function submitAllQuizzes() {
-  if (!currentSessionId.value) return;
-  imQuizJudging.value = true;
-
-  // Step 1: 选择题本地判
-  for (const q of imParsedQuizzes.value) {
-    if (
-      q.options.length > 0 &&
-      q.correctIndex >= 0 &&
-      typeof q.userAnswer === "number"
-    ) {
-      q.judgeResult = q.userAnswer === q.correctIndex;
-      q.feedback = q.judgeResult
-        ? `✅ 正确！${q.explanation || ""}`
-        : `正确答案是 **${String.fromCharCode(65 + q.correctIndex)}**。${q.explanation || ""}`;
-    }
-  }
-
-  // Step 2: 填空/简答题用 AI 批量判
-  const needAI = imParsedQuizzes.value.filter((q) => q.judgeResult === null);
-  if (needAI.length > 0) {
-    const questionsStr = needAI
-      .map((q, i) => {
-        console.log(i);
-        const userAns =
-          typeof q.userAnswer === "number"
-            ? String.fromCharCode(65 + q.userAnswer)
-            : q.userText || q.userAnswer || "未作答";
-        return `【第${imParsedQuizzes.value.indexOf(q) + 1}题】\n题目：${q.question}\n参考答案：${q.answer || "（无）"}\n学生答案：${userAns}`;
-      })
-      .join("\n\n");
-
-    const prompt = `请批量判断以下 ${needAI.length} 道题的答案是否正确。
-
-${questionsStr}
-
-请以 JSON 数组回复，每个元素格式：{"index": 题号, "correct": true/false, "feedback": "针对该题的分析（50字内）"}
-只回复 JSON 数组，不要其他文字。`;
-
-    try {
-      let fullContent = "";
-      await new Promise((resolve) => {
-        sessionApi.streamMessage(currentSessionId.value, prompt, {
-          onTextReply: (text) => {
-            fullContent += text;
-          },
-          onDone: () => resolve(),
-          onError: () => resolve(),
-        });
-      });
-      const jsonMatch = fullContent.match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
-        const results = JSON.parse(jsonMatch[0]);
-        for (const r of results) {
-          const idx = (r.index || 1) - 1;
-          const q = imParsedQuizzes.value[idx];
-          if (q && q.judgeResult === null) {
-            q.judgeResult = !!r.correct;
-            q.feedback = r.feedback || (r.correct ? "正确！" : "不正确。");
-          }
-        }
-      }
-    } catch {
-      // AI 判题失败时标记为错误
-      for (const q of needAI) {
-        if (q.judgeResult === null) {
-          q.judgeResult = false;
-          q.feedback = "AI 判题失败，请重试。";
-        }
-      }
-    }
-  }
-
-  // Step 3: 生成综合学习建议（只针对错题）
-  const wrongQuizzes = imParsedQuizzes.value.filter(
-    (q) => q.judgeResult === false,
-  );
-  if (wrongQuizzes.length > 0) {
-    const wrongStr = wrongQuizzes
-      .map((q, i) => {
-        console.log(i);
-        const userAns =
-          typeof q.userAnswer === "number"
-            ? String.fromCharCode(65 + q.userAnswer)
-            : q.userText || q.userAnswer || "未作答";
-        return `- 题目：${q.question.slice(0, 80)}\n  正确答案：${q.answer || "见解析"}\n  学生答案：${userAns}`;
-      })
-      .join("\n");
-
-    const advicePrompt = `学生在「${imCurrentChapter.value?.title || "本章"}」的习题中答错了以下题目：
-
-${wrongStr}
-
-请给出 100-200 字的综合学习建议，包括：
-1. 哪些知识点薄弱
-2. 建议重点复习的方向
-3. 简短的鼓励
-直接回复建议文本，不需要格式标记。`;
-
-    try {
-      let advice = "";
-      await new Promise((resolve) => {
-        sessionApi.streamMessage(currentSessionId.value, advicePrompt, {
-          onTextReply: (text) => {
-            advice += text;
-          },
-          onDone: () => resolve(),
-          onError: () => resolve(),
-        });
-      });
-      imQuizAdvice.value = advice;
-    } catch {
-      imQuizAdvice.value = "AI 生成建议失败，请重试。";
-    }
-  }
-
-  imQuizSubmitted.value = true;
-  imQuizJudging.value = false;
-}
-
-const imCurrentChapter = computed(
-  () => imChapters.value[imCurrentChapterIndex.value] || null,
-);
-
-const imCurrentAudioUrl = computed(() => {
-  const ch = imCurrentChapter.value;
-  if (!ch?.audio_files?.length) return "";
-  const af = ch.audio_files.find((f) => {
-    const m = f.filename?.match(/frame_(\d+)\.wav/);
-    return m && parseInt(m[1]) === imCurrentPage.value;
-  });
-  if (!af) return "";
-  // 优先用 url 字段，没有则从 pdf_path 推导 audio 目录
-  if (af.url) return af.url;
-  if (ch.pdf_path) {
-    const audioDir = ch.pdf_path.replace(/\/[^/]+\.pdf$/, "/audio/");
-    return `${BASE_URL}/api/immersive/files/${audioDir}${af.filename}`;
-  }
-  return "";
-});
-
-// 阶段指示器
-const imStages = [
-  { key: "planner", icon: "📋", name: "Planner" },
-  { key: "researcher", icon: "🔍", name: "Researcher" },
-  { key: "tex", icon: "📄", name: "TexWriter" },
-  { key: "exercises", icon: "✏️", name: "Exercises" },
-  { key: "tts", icon: "🔊", name: "TTS" },
-];
-const imStageOrder = {
-  init: -1,
-  planner: 0,
-  researcher: 1,
-  tex: 2,
-  exercises: 3,
-  tts: 4,
-  nodes: 5,
-  done: 6,
-};
-const imStageIcon = computed(() => {
-  const s = imStages.find((s) => s.key === imCurrentStage.value);
-  return s?.icon || "⚙️";
-});
-function isImStageComplete(key) {
-  return (imStageOrder[imCurrentStage.value] || 0) > (imStageOrder[key] || 0);
-}
-function isImChapterDone(chId) {
-  return imChapters.value.some((c) => c.chapter_id === chId);
-}
-function isImChapterCurrent(chId) {
-  return imGeneratingChapterId.value === chId;
-}
-
-function imAddLog(msg, level = "info") {
-  const t = new Date().toLocaleTimeString("zh-CN", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-  imLogs.value.push({ time: t, message: msg, level });
-  nextTick(() => {
-    if (imLogRef.value) imLogRef.value.scrollTop = imLogRef.value.scrollHeight;
-  });
-}
-
-// SSE 连接
-async function imStartGenerate() {
-  imGenerating.value = true;
-  imCompleted.value = false;
-  imProgress.value = 0;
-  imCurrentStage.value = "init";
-  imStatusMessage.value = "正在初始化...";
-  imAddLog(`🚀 开始生成课件：${currentTopic.value}`);
-
-  try {
-    const res = await api.postRaw(`/api/immersive/generate`, {
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ topic: currentTopic.value }),
-    });
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop();
-      for (const line of lines) {
-        if (!line.startsWith("data: ")) continue;
-        try {
-          imHandleSSE(JSON.parse(line.slice(6).trim()));
-        } catch (e) {
-          console.error("SSE 解析失败：error: ", e, "data: ", line);
-        }
-      }
-    }
-  } catch (e) {
-    imAddLog(`❌ 连接失败: ${e.message}`, "error");
-  } finally {
-    imGenerating.value = false;
-    imGeneratingChapterTitle.value = "";
-    imGeneratingChapterId.value = 0;
-  }
-}
-
-function imHandleSSE(data) {
-  let logLevel;
-  let logMessage;
-  const agentType = data.agent_type || "unknown";
-  const eventType = data.event_type || "unknown";
-  const step = data.step || 0;
-
-  let content = "";
-
-  if (data.content && data.content.length) {
-    content =
-      data.content.length > 15
-        ? data.content.substring(0, 15) + "..."
-        : data.content;
-  }
-
-  if (window.debug) console.log("[SSE]", data.type, data);
-  switch (data.type) {
-    case "progress":
-      imProgress.value = data.pct || 0;
-      imStatusMessage.value = data.message || "";
-      if (data.stage) imCurrentStage.value = data.stage;
-      imAddLog(data.message);
-      break;
-    case "outline":
-      imOutline.value = data.data;
-      imTab.value = "outline";
-      imAddLog(
-        `✅ 大纲生成完成，共 ${data.data?.chapters?.length || 0} 章`,
-        "success",
-      );
-      break;
-    case "chapter_start":
-      imGeneratingChapterId.value = data.chapter_id;
-      imGeneratingChapterTitle.value = data.title;
-      imAddLog(`📖 开始${data.title}`);
-      break;
-    case "chapter_done": {
-      const ch = data.data;
-      if (!imChapters.value.some((c) => c.chapter_id === ch.chapter_id)) {
-        imChapters.value.push(ch);
-      }
-      imGeneratingChapterTitle.value = "";
-      imGeneratingChapterId.value = 0;
-      const badges = [
-        ch.pdf_exists ? "PDF✓" : "",
-        ch.exercises_exists ? "习题✓" : "",
-        ch.audio_files?.length ? `语音${ch.audio_files.length}段` : "",
-      ]
-        .filter(Boolean)
-        .join(" ");
-      imAddLog(`✅ ${ch.title} 完成 [${badges}]`, "success");
-      if (imChapters.value.length === 1) nextTick(() => imSelectChapter(0));
-      break;
-    }
-    case "nodes_extracted":
-      imAddLog(
-        `🧠 知识图谱：${data.nodes?.length || 0} 个节点（${data.new_count || 0} 个新建）`,
-        "success",
-      );
-      break;
-    case "done":
-      imCompleted.value = true;
-      // ★ 设置 session_id，否则智流 Agent 对话会被阻止
-      if (data.session_id) {
-        currentSessionId.value = data.session_id;
-        sessionStartTime = Date.now();
-      }
-      imAddLog(`🎉 全部完成！共 ${imChapters.value.length} 章`, "success");
-      break;
-    case "error":
-      imAddLog(`❌ ${data.message}`, "error");
-      break;
-    case "agent_event":
-      // console.log('agent_event详细数据:', data)
-
-      switch (eventType) {
-        case "start":
-          logMessage = `🤖 ${agentType} 开始执行: ${content}`;
-          logLevel = "info";
-          break;
-        case "think":
-          // 简化思考内容，避免日志过长
-          // const thought = data.content.length > 200 ? data.content.substring(0, 200) + '...' : data.content
-          logMessage = `💭 ${agentType} 思考 (步骤${step}): ${content}`;
-          logLevel = "info";
-          break;
-        case "tool_call":
-          logMessage = `🛠️ ${agentType} : ${content}`;
-          logLevel = "info";
-          break;
-        case "tool_result":
-          logMessage = `✅ ${agentType} : ${content}`;
-          logLevel = "success";
-          break;
-        case "finish":
-          logMessage = `🏁 ${agentType} : ${content}`;
-          logLevel = "success";
-          break;
-        default:
-          logMessage = `🔍 ${agentType} : ${eventType} - ${content}`;
-          logLevel = "info";
-      }
-
-      imAddLog(logMessage, logLevel);
-      break;
-    default:
-      imAddLog(`🔍 收到未知事件: ${data.type}`, "info");
-      // console.log('SSE Handle: ', data)
-      break;
-  }
-}
-
-// PDF 渲染
-async function imSelectChapter(idx) {
-  imCurrentChapterIndex.value = idx;
-  imCurrentPage.value = 1;
-  // 重置习题状态
-  imQuizCurrent.value = 0;
-  imQuizSubmitted.value = false;
-  imQuizAdvice.value = "";
-  const ch = imChapters.value[idx];
-  if (!ch?.pdf_exists || !ch.pdf_path) return;
-  if (ch.exercises_exists && ch.exercises_path) {
-    try {
-      const exRes = await api.getRaw(
-        `/api/immersive/files/${ch.exercises_path}`,
-      );
-      const md = await exRes.text();
-      imExercisesHtml.value = renderMd(md);
-      // 同时解析为可交互的结构化习题
-      imParsedQuizzes.value = parseExercises(md);
-    } catch {
-      imExercisesHtml.value = "";
-      imParsedQuizzes.value = [];
-    }
-  } else {
-    imExercisesHtml.value = "";
-    imParsedQuizzes.value = [];
-  }
-  const pdfUrl = `${BASE_URL}/api/immersive/files/${ch.pdf_path}`;
-  if (!imPdfDocMap.has(pdfUrl)) {
-    try {
-      const doc = await pdfjsLib.getDocument({
-        url: pdfUrl,
-        httpHeaders: authHeaders(),
-        cMapUrl: "https://unpkg.com/pdfjs-dist@5.6.205/cmaps/",
-        cMapPacked: true,
-      }).promise;
-      imPdfDocMap.set(pdfUrl, doc);
-    } catch (e) {
-      imAddLog(`PDF 加载失败: ${e.message}`, "error");
-      return;
-    }
-  }
-  const doc = imPdfDocMap.get(pdfUrl);
-  imTotalPages.value = doc.numPages;
-  await imRenderPage(doc, 1);
-}
-
-async function imRenderPage(doc, pageNum) {
-  if (!imPdfCanvas.value) return;
-  const page = await doc.getPage(pageNum);
-  const canvas = imPdfCanvas.value;
-  const container = canvas.parentElement;
-  const dpr = window.devicePixelRatio || 2;
-  const viewport = page.getViewport({ scale: 1 });
-  const containerW = (container?.clientWidth || 800) - 48;
-  const containerH = (container?.clientHeight || 500) - 48;
-  const scale = Math.min(
-    containerW / viewport.width,
-    containerH / viewport.height,
-  );
-  const scaledVp = page.getViewport({ scale });
-  canvas.width = Math.round(scaledVp.width * dpr);
-  canvas.height = Math.round(scaledVp.height * dpr);
-  canvas.style.width = `${scaledVp.width}px`;
-  canvas.style.height = `${scaledVp.height}px`;
-  const ctx = canvas.getContext("2d");
-  ctx.scale(dpr, dpr);
-  await page.render({ canvasContext: ctx, viewport: scaledVp }).promise;
-  imCurrentPage.value = pageNum;
-}
-
-async function imGotoPage(num) {
-  const ch = imChapters.value[imCurrentChapterIndex.value];
-  if (!ch?.pdf_path) return;
-  const pdfUrl = `${BASE_URL}/api/immersive/files/${ch.pdf_path}`;
-  let doc = imPdfDocMap.get(pdfUrl);
-  // 缓存未命中时自动带鉴权加载
-  if (!doc) {
-    try {
-      doc = await pdfjsLib.getDocument({
-        url: pdfUrl,
-        httpHeaders: authHeaders(),
-        cMapUrl: "https://unpkg.com/pdfjs-dist@5.6.205/cmaps/",
-        cMapPacked: true,
-      }).promise;
-      imPdfDocMap.set(pdfUrl, doc);
-    } catch (e) {
-      imAddLog(`PDF 加载失败: ${e.message}`, "error");
-      return;
-    }
-  }
-  await imRenderPage(doc, num);
-}
-
-function imPlayAudio() {
-  if (!imCurrentAudioUrl.value) return;
-  if (imIsPlaying.value && imCurrentAudio) {
-    imCurrentAudio.pause();
-    imIsPlaying.value = false;
-    return;
-  }
-  if (imCurrentAudio) imCurrentAudio.pause();
-  // 沉浸式音频接口需要鉴权，先 fetch 为 blob 再喂给 <audio>
-  const audioPath = imCurrentAudioUrl.value.replace(BASE_URL, "");
-  fetchAsBlobUrl(audioPath)
-    .then((blobUrl) => {
-      imCurrentAudio = new Audio(blobUrl);
-      imCurrentAudio.play();
-      imIsPlaying.value = true;
-      const cleanup = () => {
-        imIsPlaying.value = false;
-        URL.revokeObjectURL(blobUrl);
-      };
-      imCurrentAudio.onended = cleanup;
-      imCurrentAudio.onerror = cleanup;
-    })
-    .catch((e) => {
-      imAddLog(`音频加载失败: ${e.message}`, "error");
-      imIsPlaying.value = false;
-    });
-}
-
-watch(imCurrentPage, () => {
-  if (imCurrentAudio) {
-    imCurrentAudio.pause();
-    imCurrentAudio = null;
-  }
-  imIsPlaying.value = false;
-});
-
 // ── 阶段状态 ────────────────────────────────────────────────────
 // idle → generating → learning
 const phase = ref("idle");
@@ -2526,6 +1053,9 @@ const currentTopic = ref("");
 const topicInput = ref("");
 const topicFocused = ref(false);
 const topicInputEl = ref(null);
+const selectedMode = ref("chat"); // 'chat' | 'immersive'
+const enableAudio = ref(false);
+const enableExercises = ref(true);
 const genProgress = ref(0);
 const genStage = ref(-1);
 
@@ -2547,163 +1077,11 @@ onMounted(async () => {
       const isImmersiveSession = (detail.title || "").startsWith("[AI课程]");
 
       if (isImmersiveSession) {
-        // ── 恢复 AI 主导学习 ──
-        learningMode.value = "immersive";
-        phase.value = "immersive";
-        imCompleted.value = true;
-        imGenerating.value = false;
-        currentTopic.value =
-          detail.topic || detail.title?.replace("[AI课程] ", "") || "历史课程";
-
-        // 尝试加载大纲（topic 需要 slugify，与后端 _slugify 一致）
-        try {
-          const courseSlug =
-            (currentTopic.value || "")
-              .replace(/[^a-zA-Z0-9\u4e00-\u9fff]+/g, "_")
-              .replace(/^_|_$/g, "")
-              .slice(0, 60) || "untitled";
-          // 目录结构：{courseSlug}_{session_id}/outline.json
-          const sid = currentSessionId.value;
-          const courseDirName = `${courseSlug}_${sid}`;
-          const outlineRes = await api.getRaw(
-            `/api/immersive/files/${encodeURIComponent(courseDirName)}/outline.json`,
-          );
-          if (outlineRes.ok) {
-            imOutline.value = await outlineRes.json();
-            imAddLog(
-              `大纲已加载，共 ${imOutline.value?.chapters?.length || 0} 章`,
-            );
-          }
-        } catch (ex) {
-          console.error("加载大纲失败", ex);
-        }
-
-        // 从 files 恢复章节列表（只加载包含 chapter_ 的课程 PDF，排除卡片）
-        if (detail.files && detail.files.length > 0) {
-          for (const f of detail.files) {
-            if (
-              f.file_type === "pdf" &&
-              f.file_id &&
-              f.file_id.includes("/chapter_")
-            ) {
-              const chIdx = imChapters.value.length;
-              const chId = chIdx + 1;
-              // file_id 格式: {topic_slug}_{session_id}/chapter_01/chapter_01.pdf
-              const filePath = f.file_id;
-              const chapterDir = filePath.replace(/\/[^/]+\.pdf$/, "");
-
-              // 检查是否有习题
-              const exPath = `${chapterDir}/chapter_${String(chId).padStart(2, "0")}_exercises.md`;
-              let hasExercises = false;
-              try {
-                const exRes = await api.getRaw(
-                  `/api/immersive/files/${exPath}`,
-                );
-                hasExercises = exRes.ok;
-              } catch (ex) {
-                console.error("检查习题文件失败", ex);
-              }
-
-              // 检查是否有语音讲解
-              const notesPath = `${chapterDir}/speaker_notes.json`;
-              let audioFiles = [];
-              try {
-                const notesRes = await api.getRaw(
-                  `/api/immersive/files/${notesPath}`,
-                );
-                if (notesRes.ok) {
-                  const notes = await notesRes.json();
-                  if (Array.isArray(notes)) {
-                    audioFiles = notes.map((_, i) => ({
-                      filename: `frame_${String(i + 1).padStart(3, "0")}.wav`,
-                      success: true,
-                    }));
-                  }
-                }
-              } catch (e) {
-                console.error("加载 speaker_notes.json 失败", e);
-              }
-
-              imChapters.value.push({
-                chapter_id: chId,
-                title: f.title || `第${chId}章`, // 数据库已存完整标题，不再加"第X章"前缀
-                pdf_exists: true,
-                pdf_path: filePath,
-                exercises_exists: hasExercises,
-                exercises_path: hasExercises ? exPath : "",
-                speaker_notes_count: audioFiles.length,
-                audio_files: audioFiles,
-                images: [],
-              });
-            }
-          }
-          // 自动选中第一章
-          if (imChapters.value.length > 0) {
-            await nextTick();
-            await nextTick();
-            imSelectChapter(0);
-          }
-        }
-        imAddLog(
-          `已恢复课程「${currentTopic.value}」，共 ${imChapters.value.length} 章`,
+        // AI 主导学习已拆分到 ImmersiveView，重定向过去
+        window.location.replace(
+          `/immersive?session_id=${detail.id}&topic=${encodeURIComponent(detail.topic || detail.title?.replace("[AI课程] ", "") || "")}`,
         );
-        imTab.value = "outline"; // 默认显示大纲
-
-        // 从持久化消息中恢复智流 Agent 对话记录
-        // 后端 append_message 会保存所有消息（包含 [智流Agent] 前缀的）
-        if (detail.messages && detail.messages.length > 0) {
-          const agentMsgs = [];
-          for (let i = 0; i < detail.messages.length; i++) {
-            const m = detail.messages[i];
-            if (
-              m.role === "user" &&
-              m.content &&
-              m.content.startsWith("[智流Agent]")
-            ) {
-              // 提取用户原始问题（去掉 [智流Agent] 前缀和上下文信息）
-              const match = m.content.match(/用户问题：(.+)$/s);
-              const userText = match
-                ? match[1].trim()
-                : m.content.replace(/^\[智流Agent\].*?\n\n/, "");
-              const timeStr = m.created_at
-                ? new Date(m.created_at).toLocaleTimeString("zh-CN", {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })
-                : "";
-              agentMsgs.push({
-                role: "user",
-                content: userText,
-                time: timeStr,
-              });
-              // 下一条应该是 assistant 回复
-              if (
-                i + 1 < detail.messages.length &&
-                detail.messages[i + 1].role === "assistant"
-              ) {
-                const am = detail.messages[i + 1];
-                const aTimeStr = am.created_at
-                  ? new Date(am.created_at).toLocaleTimeString("zh-CN", {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })
-                  : "";
-                agentMsgs.push({
-                  role: "assistant",
-                  thinking: false,
-                  content: am.content,
-                  html: renderMd(am.content),
-                  time: aTimeStr,
-                });
-                i++; // 跳过已处理的 assistant 消息
-              }
-            }
-          }
-          if (agentMsgs.length > 0) {
-            imAgentMessages.value = agentMsgs;
-            imAddLog(`已恢复 ${agentMsgs.length} 条智流 Agent 对话`);
-          }
-        }
+        return;
       } else {
         // ── 恢复人机交互学习 ──
         phase.value = "learning";
@@ -2713,20 +1091,21 @@ onMounted(async () => {
           role: m.role,
           content: m.content,
           html: m.role === "assistant" ? renderMd(m.content) : m.content,
+          ready: true, // 历史消息直接可见，不需要淡入动画
           time: m.created_at
             ? new Date(m.created_at).toLocaleTimeString("zh-CN", {
                 hour: "2-digit",
                 minute: "2-digit",
               })
             : "",
-          steps: [],
+          steps: [], // 兼容旧数据
+          stepBlocks: [],
           events: [],
         }));
 
         // 恢复历史卡片
         if (detail.files && detail.files.length > 0) {
-          await nextTick();
-          await loadSessionCards(detail.files);
+          loadSessionCards(detail.files);
         }
       }
 
@@ -2741,17 +1120,18 @@ onMounted(async () => {
     }
   } else if (topic) {
     topicInput.value = String(topic);
-    // 如果 mode=immersive，直接启动 AI 主导学习
+    // 如果 mode=immersive，重定向到 ImmersiveView
     if (route.query.mode === "immersive") {
-      nextTick(() => startImmersive());
+      window.location.replace(`/immersive?topic=${encodeURIComponent(topic)}`);
+      return;
     } else {
       nextTick(() => startLearning());
     }
   }
 });
 
-// ── 起始页：漂浮云朵主题（V1 设计） ─────────────────────────────────
-const rawSuggestions = [
+// ── 起始页：漂浮云朵主题（支持个性化推荐） ─────────────────────────────────
+const defaultSuggestions = [
   { text: "递归算法", emoji: "🌀", size: "md" },
   { text: "微积分", emoji: "∫", size: "xl" },
   { text: "机器学习", emoji: "🤖", size: "lg" },
@@ -2765,6 +1145,24 @@ const rawSuggestions = [
   { text: "神经网络", emoji: "🧠", size: "xl" },
   { text: "哲学导论", emoji: "💭", size: "sm" },
 ];
+
+const rawSuggestions = ref(defaultSuggestions);
+
+// 异步加载个性化推荐云朵
+(async () => {
+  try {
+    const res = await api.get("/api/immersive/suggestions");
+    if (res?.suggestions?.length > 0) {
+      rawSuggestions.value = res.suggestions.map((s) => ({
+        text: s.text,
+        emoji: s.emoji || "💡",
+        size: s.size || "md",
+      }));
+    }
+  } catch {
+    // 失败时保持默认列表
+  }
+})();
 
 const layoutPositions = [
   { top: "8%", left: "4%" },
@@ -2788,7 +1186,7 @@ function pseudoRand(i, seed = 1) {
 }
 
 const clouds = computed(() =>
-  rawSuggestions.map((s, i) => {
+  rawSuggestions.value.map((s, i) => {
     const pos = layoutPositions[i % layoutPositions.length];
     const delay = (i * 0.37) % 5;
     const dur = 6 + pseudoRand(i, 2) * 5;
@@ -2860,270 +1258,151 @@ function animateProgress(from, to, duration) {
   });
 }
 
-// ── PDF 卡片（file_created 事件追加）────────────────────────────
-// pdfCards: [{ fileId, title, url, thumbs: [] }]
-// 注意：pdfDoc 对象不能放进 Vue 响应式（ref/reactive），否则 Proxy 会破坏 pdfjs 私有字段
-const pdfCards = ref([]);
-const pdfDocMap = new Map(); // fileId -> PDFDocumentProxy（原生对象，不经过 Vue 响应式）
-const currentPdfIndex = ref(0);
-const currentPageIndex = ref(0);
-const pdfMainCanvas = ref(null);
-const thumbCanvasMap = ref({}); // { pageIndex: canvasEl }
+// ── 卡片列表（三种类型：html / viz / quiz）────────────────────────
+// cards: [{ slotId, cardId, cardType, title, loading, stage, stageLabel }]
+//   cardType: 'html' | 'viz' | 'quiz'
+//   loading=true  → 占位卡片（生成中）
+//   loading=false → 已完成卡片
+const cards = ref([]);
 
-const currentCardPages = computed(() => {
-  const card = pdfCards.value[currentPdfIndex.value];
-  return card?.thumbs?.length ?? 0;
+// ── Quiz 批次管理 ─────────────────────────────────────────────────
+// 每轮 SSE 生成的 quiz 卡片收集到同一批次，全部答完后统一发一条汇总消息
+// Map<quizId, { question, answered, result }>
+const pendingQuizBatch = ref(new Map());
+const currentCardIndex = ref(0);
+
+// 是否存在未答的 quiz 题目（输入框锁定条件）
+const hasUnansweredQuiz = computed(() => {
+  if (pendingQuizBatch.value.size === 0) return false;
+  return [...pendingQuizBatch.value.values()].some((item) => !item.answered);
 });
-
-// ── 卡片音频播放 ─────────────────────────────────────────────────
-const cardIsPlaying = ref(false);
-let cardCurrentAudio = null;
-
-const cardAudioUrl = computed(() => {
-  const card = pdfCards.value[currentPdfIndex.value];
-  if (!card?.fileId) return "";
-  // fileId 格式: "{card_id}/card.pdf"，提取 card_id
-  const cardId = card.fileId.split("/")[0];
-  const frameNum = String(currentPageIndex.value + 1).padStart(3, "0");
-  return `${BASE_URL}/files/cards/${cardId}/audio/frame_${frameNum}.wav`;
-});
-
-function playCardAudio() {
-  if (!cardAudioUrl.value) return;
-  if (cardIsPlaying.value && cardCurrentAudio) {
-    cardCurrentAudio.pause();
-    cardIsPlaying.value = false;
-    return;
-  }
-  if (cardCurrentAudio) cardCurrentAudio.pause();
-  // 卡片音频接口需要鉴权，先 fetch 为 blob 再喂给 <audio>
-  const audioPath = cardAudioUrl.value.replace(BASE_URL, "");
-  fetchAsBlobUrl(audioPath)
-    .then((blobUrl) => {
-      cardCurrentAudio = new Audio(blobUrl);
-      cardCurrentAudio.play().catch(() => {
-        cardIsPlaying.value = false;
-      });
-      cardIsPlaying.value = true;
-      const cleanup = () => {
-        cardIsPlaying.value = false;
-        URL.revokeObjectURL(blobUrl);
-      };
-      cardCurrentAudio.onended = cleanup;
-      cardCurrentAudio.onerror = cleanup;
-    })
-    .catch(() => {
-      cardIsPlaying.value = false;
-    });
-}
-
-// 切页时停止音频
-watch(currentPageIndex, () => {
-  if (cardCurrentAudio) {
-    cardCurrentAudio.pause();
-    cardCurrentAudio = null;
-  }
-  cardIsPlaying.value = false;
-});
-watch(currentPdfIndex, () => {
-  if (cardCurrentAudio) {
-    cardCurrentAudio.pause();
-    cardCurrentAudio = null;
-  }
-  cardIsPlaying.value = false;
-});
-
-function setThumbCanvas(el, pi) {
-  if (el) thumbCanvasMap.value[pi] = el;
-}
-
-async function addPdfCard(fileId, title) {
-  console.log("[PDF] addPdfCard", fileId, title);
-  const url = `${BASE_URL}/files/cards/${fileId}`;
-  pdfCards.value.push({ fileId, title: title || fileId, url, thumbs: [] });
-  const idx = pdfCards.value.length - 1;
-  // 等 DOM 渲染（v-if="pdfCards.length > 0" 触发后 canvas 才存在）
-  await nextTick();
-  await nextTick(); // 双 tick 确保 canvas 完全挂载
-  console.log("[PDF] nextTick 后 pdfMainCanvas=", pdfMainCanvas.value);
-  await selectCard(idx);
-}
-
-async function selectCard(idx) {
-  console.log("[PDF] selectCard", idx);
-  currentPdfIndex.value = idx;
-  currentPageIndex.value = 0;
-  thumbCanvasMap.value = {};
-  const card = pdfCards.value[idx];
-  if (!card) return;
-
-  // 加载 PDF，pdfDoc 存入普通 Map，不经过 Vue 响应式
-  if (!pdfDocMap.has(card.fileId)) {
-    try {
-      console.log("[PDF] 开始加载 PDF:", card.url);
-      const pdfDoc = await pdfjsLib.getDocument({
-        url: card.url,
-        httpHeaders: authHeaders(),
-        cMapUrl: "https://unpkg.com/pdfjs-dist@5.6.205/cmaps/",
-        cMapPacked: true,
-      }).promise;
-      console.log("[PDF] PDF 加载成功，页数:", pdfDoc.numPages);
-      pdfDocMap.set(card.fileId, pdfDoc);
-    } catch (e) {
-      console.warn("[PDF] PDF 加载失败:", e);
-      return;
+// quiz 锁定提示 toast
+const quizLockToast = ref(false);
+let quizLockToastTimer = null;
+function showQuizLockToast() {
+  // 跳转到第一张未答的 quiz 卡片
+  const batch = pendingQuizBatch.value;
+  for (let i = 0; i < cards.value.length; i++) {
+    const card = cards.value[i];
+    if (
+      card.cardType === "quiz" &&
+      !card.loading &&
+      batch.has(card.cardId) &&
+      !batch.get(card.cardId).answered
+    ) {
+      currentCardIndex.value = i;
+      break;
     }
   }
-
-  const pdfDoc = pdfDocMap.get(card.fileId);
-  const numPages = pdfDoc.numPages;
-  // 初始化 thumbs 数组（只存普通数据，不存 pdfDoc）
-  pdfCards.value[idx] = { ...card, thumbs: new Array(numPages).fill(null) };
-
-  // 先渲染主视图第1页
-  await renderMainPage(card.fileId, 0);
-  // 异步渲染所有缩略图
-  for (let i = 0; i < numPages; i++) {
-    await renderThumb(card.fileId, i, idx);
-  }
+  // 显示 toast
+  quizLockToast.value = true;
+  clearTimeout(quizLockToastTimer);
+  quizLockToastTimer = setTimeout(() => {
+    quizLockToast.value = false;
+  }, 2500);
 }
 
-async function gotoPage(pi) {
-  currentPageIndex.value = pi;
-  const card = pdfCards.value[currentPdfIndex.value];
-  if (card && pdfDocMap.has(card.fileId)) await renderMainPage(card.fileId, pi);
-}
+// 占位卡片映射：toolCallId → slotIndex
+const pendingCardSlots = new Map();
 
-async function renderMainPage(fileId, pageIndex) {
-  const pdfDoc = pdfDocMap.get(fileId);
-  console.log("[PDF] renderMainPage", {
-    canvas: pdfMainCanvas.value,
-    hasPdfDoc: !!pdfDoc,
-    pageIndex,
+const currentCard = computed(() => cards.value[currentCardIndex.value] || null);
+
+/** 在 onToolCall 时插入占位卡片，返回 slotIndex */
+function addCardPlaceholder(slotId, title, cardType = "html") {
+  if (pendingCardSlots.has(slotId)) return pendingCardSlots.get(slotId);
+  const idx = cards.value.length;
+  cards.value.push({
+    slotId,
+    cardId: null,
+    cardType,
+    title: title || "知识卡片",
+    loading: true,
+    stage: "generating",
+    stageLabel: "正在生成...",
   });
-  if (!pdfMainCanvas.value || !pdfDoc) {
-    console.warn(
-      "[PDF] renderMainPage 跳过：canvas=",
-      pdfMainCanvas.value,
-      "pdfDoc=",
-      pdfDoc,
-    );
-    return;
-  }
-  const page = await pdfDoc.getPage(pageIndex + 1);
-  const canvas = pdfMainCanvas.value;
-  const container = canvas.parentElement;
-  if (!container) {
-    console.warn("[PDF] canvas 没有 parentElement");
-    return;
-  }
-  const containerW = container.clientWidth || 800;
-  const containerH = container.clientHeight || 500;
-  console.log("[PDF] 容器尺寸", containerW, "x", containerH);
-
-  // 考虑设备像素比以获得更清晰的渲染
-  const dpr = window.devicePixelRatio || 1;
-
-  const viewport = page.getViewport({ scale: 1 });
-  const scaleW = (containerW - 48) / viewport.width;
-  const scaleH = (containerH - 48) / viewport.height;
-  const scale = Math.min(scaleW, scaleH);
-  const scaledVp = page.getViewport({ scale });
-
-  // 设置canvas尺寸考虑DPI
-  canvas.width = Math.round(scaledVp.width * dpr);
-  canvas.height = Math.round(scaledVp.height * dpr);
-  canvas.style.width = `${scaledVp.width}px`;
-  canvas.style.height = `${scaledVp.height}px`;
-
-  const ctx = canvas.getContext("2d");
-  ctx.scale(dpr, dpr);
-
-  // 改进的渲染配置
-  const renderContext = {
-    canvasContext: ctx,
-    viewport: scaledVp,
-    // 启用文本层渲染，有助于字体显示
-    enableTextLayer: true,
-    // 强制使用系统字体
-    useSystemFonts: true,
-  };
-
-  await page.render(renderContext).promise;
-  console.log(
-    "[PDF] 主视图渲染完成",
-    canvas.width,
-    "x",
-    canvas.height,
-    "DPI:",
-    dpr,
-  );
+  pendingCardSlots.set(slotId, idx);
+  return idx;
 }
 
-async function renderThumb(fileId, pageIndex, cardIdx) {
-  const pdfDoc = pdfDocMap.get(fileId);
-  if (!pdfDoc) return;
-  const page = await pdfDoc.getPage(pageIndex + 1);
-  // 缩略图固定宽 160px，考虑DPI
-  const dpr = window.devicePixelRatio || 1;
-  const viewport = page.getViewport({ scale: 1 });
-  const scale = 160 / viewport.width;
-  const scaledVp = page.getViewport({ scale });
-  const offscreen = document.createElement("canvas");
-  offscreen.width = Math.round(scaledVp.width * dpr);
-  offscreen.height = Math.round(scaledVp.height * dpr);
-  offscreen.style.width = `${scaledVp.width}px`;
-  offscreen.style.height = `${scaledVp.height}px`;
-  const ctx = offscreen.getContext("2d");
-  ctx.scale(dpr, dpr);
+/** 更新占位卡片的阶段文字 */
+function updateCardSlotStage(slotId, content) {
+  const idx = pendingCardSlots.get(slotId);
+  if (idx === undefined) return;
+  const card = cards.value[idx];
+  if (!card?.loading) return;
+  let stage = card.stage;
+  let stageLabel = content;
+  if (content.includes("正在生成知识卡片") || content.includes("正在生成")) {
+    stage = "generating";
+    stageLabel = "正在生成...";
+  } else if (content.includes("卡片生成完成") || content.includes("生成完成")) {
+    stage = "done";
+    stageLabel = "生成完成";
+  }
+  cards.value[idx] = { ...card, stage, stageLabel };
+}
 
-  // 改进的渲染配置
-  const renderContext = {
-    canvasContext: ctx,
-    viewport: scaledVp,
-    // 启用文本层渲染，有助于字体显示
-    enableTextLayer: true,
-    // 强制使用系统字体
-    useSystemFonts: true,
+/** onToolResult 时，将占位卡片关联到真实 cardId */
+function resolveCardSlot(slotId, cardId, title, cardType) {
+  const idx = pendingCardSlots.get(slotId);
+  if (idx === undefined) return;
+  const card = cards.value[idx];
+  if (!card) return;
+  cards.value[idx] = {
+    ...card,
+    slotId,
+    cardId,
+    cardType: cardType || card.cardType,
+    title: title || card.title,
+    loading: false,
+    stage: "done",
+    stageLabel: "",
   };
-
-  await page.render(renderContext).promise;
-  if (pdfCards.value[cardIdx]?.fileId === fileId) {
-    // 从最新的响应式对象取 thumbs（避免用旧快照）
-    const newThumbs = [...(pdfCards.value[cardIdx].thumbs || [])];
-    newThumbs[pageIndex] = offscreen;
-    pdfCards.value[cardIdx] = { ...pdfCards.value[cardIdx], thumbs: newThumbs };
-    // 等 DOM 更新后把 offscreen 内容绘制到 ts-canvas
-    await nextTick();
-    const thumbEl = thumbCanvasMap.value[pageIndex];
-    if (thumbEl) {
-      thumbEl.width = offscreen.width;
-      thumbEl.height = offscreen.height;
-      thumbEl.getContext("2d").drawImage(offscreen, 0, 0);
-    }
+  // 自动切换到新生成的卡片
+  if (idx >= currentCardIndex.value) {
+    currentCardIndex.value = idx;
   }
 }
 
-// 恢复历史会话时加载已有卡片
-async function loadSessionCards(files) {
+/** 恢复历史会话时加载已有卡片 */
+function loadSessionCards(files) {
+  // 非卡片类型（文档、音频等），排除掉
+  const NON_CARD_TYPES = new Set([
+    "md",
+    "pdf",
+    "audio",
+    "json",
+    "other",
+    "empty",
+  ]);
   for (const f of files) {
-    if (f.file_type === "pdf") {
-      await addPdfCard(f.file_id, f.title);
-    }
+    // 兼容旧数据：file_type 缺失或为非卡片类型时跳过
+    if (!f.file_id) continue;
+    const cardType =
+      f.file_type && !NON_CARD_TYPES.has(f.file_type) ? f.file_type : null;
+    if (!cardType) continue;
+    cards.value.push({
+      slotId: f.file_id,
+      cardId: f.file_id,
+      cardType,
+      title: f.title || f.file_id,
+      loading: false,
+      stage: "done",
+      stageLabel: "",
+    });
   }
+  if (cards.value.length > 0) currentCardIndex.value = 0;
 }
 
-// 窗口 resize 时重新渲染主视图
-function onWindowResize() {
-  const card = pdfCards.value[currentPdfIndex.value];
-  if (card && pdfDocMap.has(card.fileId))
-    renderMainPage(card.fileId, currentPageIndex.value);
+function selectCard(idx) {
+  const card = cards.value[idx];
+  if (!card || card.loading) return;
+  currentCardIndex.value = idx;
 }
 
-// ── 幻灯片（保留 quiz 卡片交互状态）────────────────────────────
+// ── 幻灯片（保留兼容） ────────────────────────────────────────────
 const slides = ref([]);
 const currentIndex = ref(0);
-
 const currentSlide = computed(() => slides.value[currentIndex.value] || null);
 
 // ── 离开确认 ─────────────────────────────────────────────────────
@@ -3132,11 +1411,7 @@ let pendingLeaveAction = null; // 'reset' | Function (路由守卫的 next)
 
 // 是否有任何生成任务正在进行
 const isAnythingGenerating = computed(
-  () =>
-    isGenerating.value ||
-    phase.value === "generating" ||
-    imGenerating.value ||
-    imAgentGenerating.value,
+  () => isGenerating.value || phase.value === "generating",
 );
 
 function handleBack() {
@@ -3185,39 +1460,15 @@ function resetToIdle() {
     sseController = null;
   }
   phase.value = "idle";
-  learningMode.value = "chat";
   slides.value = [];
-  pdfCards.value = [];
-  currentPdfIndex.value = 0;
-  currentPageIndex.value = 0;
-  thumbCanvasMap.value = {};
+  cards.value = [];
+  currentCardIndex.value = 0;
+  pendingCardSlots.clear();
   messages.value = [];
   currentIndex.value = 0;
   topicInput.value = "";
   genProgress.value = 0;
   genStage.value = -1;
-  // AI 主导模式清理
-  if (imCurrentAudio) {
-    imCurrentAudio.pause();
-    imCurrentAudio = null;
-  }
-  imGenerating.value = false;
-  imCompleted.value = false;
-  imProgress.value = 0;
-  imCurrentStage.value = "";
-  imStatusMessage.value = "";
-  imOutline.value = null;
-  imChapters.value = [];
-  imCurrentChapterIndex.value = 0;
-  imCurrentPage.value = 1;
-  imTotalPages.value = 0;
-  imTab.value = "log";
-  imLogs.value = [];
-  imIsPlaying.value = false;
-  imExercisesHtml.value = "";
-  imGeneratingChapterId.value = 0;
-  imGeneratingChapterTitle.value = "";
-  imPdfDocMap.clear();
 }
 
 // 浏览器关闭/刷新拦截
@@ -3229,12 +1480,10 @@ function handleBeforeUnload(e) {
 }
 
 onMounted(() => {
-  window.addEventListener("resize", onWindowResize);
   window.addEventListener("beforeunload", handleBeforeUnload);
 });
 onUnmounted(() => {
   if (sseController) sseController.abort();
-  window.removeEventListener("resize", onWindowResize);
   window.removeEventListener("beforeunload", handleBeforeUnload);
   // 离开页面时上报本次会话学习时长
   if (currentSessionId.value && sessionStartTime) {
@@ -3246,65 +1495,8 @@ onUnmounted(() => {
   }
 });
 
-// ── 导出 ─────────────────────────────────────────────────────────
-const isExporting = ref(false);
-
-async function exportSlides() {
-  if (isExporting.value || pdfCards.value.length === 0) return;
-
-  // 只有一张卡片时直接下载，无需合并（走鉴权 fetch 转 blob）
-  if (pdfCards.value.length === 1) {
-    try {
-      const card = pdfCards.value[0];
-      const blobUrl = await fetchAsBlobUrl(card.url.replace(BASE_URL, ""));
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `${card.title || "slides"}.pdf`;
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
-    } catch (e) {
-      console.error("PDF 下载失败:", e);
-    }
-    return;
-  }
-
-  isExporting.value = true;
-  try {
-    const merged = await PDFDocument.create();
-    for (const card of pdfCards.value) {
-      const res = await api.getRaw(card.url.replace(BASE_URL, ""));
-      const bytes = await res.arrayBuffer();
-      const src = await PDFDocument.load(bytes);
-      const pages = await merged.copyPages(src, src.getPageIndices());
-      pages.forEach((p) => merged.addPage(p));
-    }
-    const mergedBytes = await merged.save();
-    const blob = new Blob([mergedBytes], { type: "application/pdf" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${currentTopic.value || "slides"}_全部卡片.pdf`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 5000);
-  } catch (e) {
-    console.error("PDF 合并失败:", e);
-    // 降级：逐个下载（同样走鉴权 blob）
-    for (const card of pdfCards.value) {
-      try {
-        const blobUrl = await fetchAsBlobUrl(card.url.replace(BASE_URL, ""));
-        const a = document.createElement("a");
-        a.href = blobUrl;
-        a.download = `${card.title || "slides"}.pdf`;
-        a.click();
-        setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
-      } catch (downloadErr) {
-        console.error("单卡下载失败:", downloadErr);
-      }
-    }
-  } finally {
-    isExporting.value = false;
-  }
-}
+// ── 导出（暂不支持，保留占位）────────────────────────────────────
+// const isExporting = ref(false);
 // ── 对话 ────────────────────────────────────────────────────────
 const inputText = ref("");
 const inputFocused = ref(false);
@@ -3331,6 +1523,110 @@ const contextQuicks = computed(() => {
     }[type] || ["帮我解释当前内容", "出一道练习题", "有什么学习建议？"]
   );
 });
+
+// 答题完成后，等本批次全部答完再统一通知 Agent
+function onQuizAnswered(result) {
+  const { quizId } = result;
+
+  // 标记该题已答
+  if (quizId && pendingQuizBatch.value.has(quizId)) {
+    pendingQuizBatch.value.set(quizId, {
+      ...pendingQuizBatch.value.get(quizId),
+      answered: true,
+      result,
+    });
+  }
+
+  // 检查批次中是否还有未答的题
+  const batch = [...pendingQuizBatch.value.values()];
+  const allAnswered = batch.length > 0 && batch.every((item) => item.answered);
+
+  if (!allAnswered) return; // 还有题没答，等待
+
+  // 全部答完，构造汇总消息
+  const typeMap = {
+    multiple_choice: "单选题",
+    true_false: "判断题",
+    fill_in: "填空题",
+    open_ended: "简答题",
+  };
+
+  // 辅助：把用户答案转为完整内容（选择题填充选项文本）
+  function formatAnswer(r) {
+    if (
+      r.quiz_type === "multiple_choice" &&
+      r.options &&
+      r.options.length > 0
+    ) {
+      const letter = (r.user_answer || "").toUpperCase();
+      const matched = r.options.find((opt) => opt[0].toUpperCase() === letter);
+      return matched ? matched : r.user_answer;
+    }
+    if (r.quiz_type === "true_false") {
+      return r.user_answer === "true" ? "正确" : "错误";
+    }
+    return r.user_answer;
+  }
+
+  // 辅助：格式化正确答案（选择题填充选项文本）
+  function formatCorrectAnswer(r) {
+    if (
+      r.quiz_type === "multiple_choice" &&
+      r.options &&
+      r.options.length > 0
+    ) {
+      const letter = (r.correct_answer || "").toUpperCase();
+      const matched = r.options.find((opt) => opt[0].toUpperCase() === letter);
+      return matched ? matched : r.correct_answer;
+    }
+    if (r.quiz_type === "true_false") {
+      const trueVals = ["true", "正确", "对", "是", "yes", "t", "1"];
+      return trueVals.includes((r.correct_answer || "").toLowerCase())
+        ? "正确"
+        : "错误";
+    }
+    return r.correct_answer;
+  }
+
+  // eslint-disable-next-line no-useless-assignment
+  let msg = "";
+  if (batch.length === 1) {
+    // 只有一道题，简洁格式
+    const item = batch[0];
+    const r = item.result;
+    const typeLabel = typeMap[r.quiz_type] || "题目";
+    const answerText = formatAnswer(r);
+    const resultText = r.is_correct
+      ? "回答正确 ✓"
+      : `回答错误 ✗（正确答案：${formatCorrectAnswer(r)}）`;
+    // 选择题附上完整选项列表
+    const optionsText =
+      r.quiz_type === "multiple_choice" && r.options?.length
+        ? `\n选项：${r.options.join(" / ")}`
+        : "";
+    msg = `我完成了一道${typeLabel}：\n题目：${r.question}${optionsText}\n我的答案：${answerText}\n${resultText}`;
+  } else {
+    // 多道题，列表格式
+    const lines = batch.map((item, i) => {
+      const r = item.result;
+      const answerText = formatAnswer(r);
+      const resultText = r.is_correct
+        ? "正确 ✓"
+        : `错误 ✗（正确答案：${formatCorrectAnswer(r)}）`;
+      const optionsText =
+        r.quiz_type === "multiple_choice" && r.options?.length
+          ? `（选项：${r.options.join(" / ")}）`
+          : "";
+      return `第${i + 1}题（${typeMap[r.quiz_type] || "题目"}）：${r.question}${optionsText}\n   我的答案：${answerText}，${resultText}`;
+    });
+    const correctCount = batch.filter((item) => item.result.is_correct).length;
+    msg = `我完成了本轮 ${batch.length} 道练习题（答对 ${correctCount} 题）：\n\n${lines.join("\n\n")}`;
+  }
+
+  // 清空批次，发送汇总消息
+  pendingQuizBatch.value.clear();
+  sendMessage(msg);
+}
 
 async function sendMessage(text) {
   if (!text.trim() || phase.value === "generating" || isGenerating.value)
@@ -3379,9 +1675,32 @@ async function sendWithSSE(text) {
       thinking: false,
       content: "",
       html: "",
+      ready: false, // 控制最终回复淡入
       time: now(),
-      steps: [], // 工具调用进度
+      stepBlocks: [], // 按 step 分组的执行块
       events: [], // 业务事件标签
+    };
+
+    // 辅助：获取或创建某个 step 的 block
+    const getOrCreateBlock = (step) => {
+      const blocks = messages.value[idx].stepBlocks;
+      let blk = blocks.find((b) => b.step === step);
+      if (!blk) {
+        blk = { step, think: null, toolCalls: [] };
+        blocks.push(blk);
+        // 按 step 排序
+        blocks.sort((a, b) => a.step - b.step);
+      }
+      return blk;
+    };
+
+    // 辅助：获取某个 toolCall 条目（通过 id）
+    const getToolCall = (id) => {
+      for (const blk of messages.value[idx].stepBlocks) {
+        const tc = blk.toolCalls.find((t) => t.id === id);
+        if (tc) return tc;
+      }
+      return null;
     };
 
     // 检查是否启用 debug 模式
@@ -3403,91 +1722,282 @@ async function sendWithSSE(text) {
       messages.value[idx] = { ...messages.value[idx], ...patch };
     };
 
+    // 工具名称映射
+    const toolLabels = {
+      search_nodes: "搜索知识节点",
+      get_node: "获取节点详情",
+      create_node: "创建知识节点",
+      update_node: "更新节点",
+      update_mastery: "更新掌握度",
+      create_quiz: "生成测验题",
+      generate_html_card: "生成知识卡片",
+      generate_interactive_viz: "生成交互可视化",
+      tavily_search: "网络搜索",
+      arxiv_search: "搜索论文",
+      web_fetch: "获取网页",
+      read_file: "读取文件",
+      list_dir: "列出目录",
+    };
+
+    // 标志：是否已经有过工具调用（用于区分思考轮 vs 最终回复轮）
+    let hasToolCall = false;
+
     sseController = sessionApi.streamMessage(currentSessionId.value, text, {
+      // ── 流式分片事件 ──────────────────────────────────────────
+      onThinkChunk: (delta, step) => {
+        if (debugMode) console.log("[DEBUG] onThinkChunk:", { step, delta });
+        const blk = getOrCreateBlock(step);
+        const isReplyRound = blk.toolCalls.length === 0 && hasToolCall;
+        if (!hasToolCall || isReplyRound) {
+          fullContent += delta;
+          // 流式输出时直接显示（不等 ready），用 msg-text--ready 让它始终可见
+          updateMsg({
+            content: fullContent,
+            html: renderMd(fullContent),
+            ready: true,
+            time: now(),
+          });
+        }
+        // 更新 think 块内容（用于折叠展示思考过程）
+        if (!blk.think) {
+          blk.think = { status: "running", content: "", collapsed: false };
+        }
+        blk.think.content += delta;
+        updateMsg({ stepBlocks: [...messages.value[idx].stepBlocks] });
+        scrollBottom();
+      },
+
+      onToolCallChunk: (index, id, tool, argsDelta, step) => {
+        if (debugMode)
+          console.log("[DEBUG] onToolCallChunk:", {
+            index,
+            id,
+            tool,
+            argsDelta,
+            step,
+          });
+        const blk = getOrCreateBlock(step);
+        let tc = blk.toolCalls.find((t) => t.id === id);
+        if (!tc) {
+          tc = {
+            id,
+            tool,
+            step,
+            status: "pending", // pending → calling → running → done
+            title: `${toolLabels[tool] || tool} 调用请求`,
+            argsBuf: "",
+            runLogs: [],
+            resultSummary: "",
+            collapsed: false,
+          };
+          blk.toolCalls.push(tc);
+        }
+        if (argsDelta) tc.argsBuf += argsDelta;
+        updateMsg({ stepBlocks: [...messages.value[idx].stepBlocks] });
+        scrollBottom();
+        // 自动滚动参数区到底部
+        nextTick(() => scrollArgsRef(id));
+      },
+
+      onToolRun: (id, tool, content, step) => {
+        if (debugMode)
+          console.log("[DEBUG] onToolRun:", {
+            id,
+            tool,
+            step,
+            content: content?.slice?.(0, 80),
+          });
+        const tc = getToolCall(id);
+        if (!tc) return;
+        tc.status = "running";
+        // 解析 content：可能是普通文本，也可能是嵌套 agent 事件
+        const logEntry = parseRunContent(content);
+        tc.runLogs.push(logEntry);
+        // generate_html_card：更新占位卡片的阶段文字
+        if (tool === "generate_html_card" && typeof content === "string") {
+          updateCardSlotStage(id, content);
+        }
+        updateMsg({ stepBlocks: [...messages.value[idx].stepBlocks] });
+        scrollBottom();
+        nextTick(() => scrollLogsRef(id));
+      },
+
+      onTextChunk: (delta) => {
+        if (debugMode) console.log("[DEBUG] onTextChunk:", { delta });
+        fullContent += delta;
+        updateMsg({
+          content: fullContent,
+          html: renderMd(fullContent),
+          time: now(),
+        });
+        scrollBottom();
+      },
+
+      // ── 汇总事件 ─────────────────────────────────────────────
       onThinking: (content, step) => {
-        if (debugMode) {
+        if (debugMode)
           console.log("[DEBUG] onThinking:", {
             step,
-            content:
-              content.slice(0, 100) + (content.length > 100 ? "..." : ""),
+            content: content.slice(0, 80),
           });
-        }
-        // 思考步骤：更新或追加 steps 中的 thinking 条目
-        const steps = [...(messages.value[idx].steps || [])];
-        const existing = steps.find(
-          (s) => s.type === "thinking" && s.step === step,
-        );
-        if (existing) {
-          existing.label = `思考中：${content.slice(0, 40)}${content.length > 40 ? "…" : ""}`;
+        const blk = getOrCreateBlock(step);
+        if (!blk.think) {
+          blk.think = { status: "done", content, collapsed: true };
         } else {
-          steps.push({
-            type: "thinking",
-            step,
-            status: "running",
-            label: `思考中：${content.slice(0, 40)}${content.length > 40 ? "…" : ""}`,
-          });
+          // 用完整内容替换流式累积，并标为完成后自动折叠
+          blk.think.content = content;
+          blk.think.status = "done";
+          blk.think.collapsed = true;
         }
-        updateMsg({ steps });
+        updateMsg({ stepBlocks: [...messages.value[idx].stepBlocks] });
         scrollBottom();
       },
-      onToolCall: (tool, args, step) => {
-        if (debugMode) {
-          console.log("[DEBUG] onToolCall:", {
+
+      onToolCall: (id, tool, args, step) => {
+        if (debugMode)
+          console.log("[DEBUG] onToolCall:", { id, tool, step, args });
+        // 有工具调用 → 当前轮是思考轮，清空 fullContent，标记已有工具调用
+        hasToolCall = true;
+        fullContent = "";
+        updateMsg({ content: "", html: "", time: now() });
+        const blk = getOrCreateBlock(step);
+        let tc = blk.toolCalls.find((t) => t.id === id);
+        if (!tc) {
+          tc = {
+            id,
             tool,
             step,
-            args:
-              typeof args === "string"
-                ? args.slice(0, 200) + (args.length > 200 ? "..." : "")
-                : args,
-          });
+            status: "calling",
+            title: `正在调用：${toolLabels[tool] || tool}`,
+            argsBuf:
+              typeof args === "string" ? args : JSON.stringify(args, null, 2),
+            runLogs: [],
+            resultSummary: "",
+            collapsed: false,
+          };
+          blk.toolCalls.push(tc);
+        } else {
+          tc.status = "calling";
+          tc.title = `正在调用：${toolLabels[tool] || tool}`;
+          if (!tc.argsBuf) {
+            tc.argsBuf =
+              typeof args === "string" ? args : JSON.stringify(args, null, 2);
+          }
         }
-        const steps = [...(messages.value[idx].steps || [])];
-        const toolLabels = {
-          search_nodes: "搜索知识节点",
-          get_node: "获取节点详情",
-          create_node: "创建知识节点",
-          update_node: "更新节点",
-          update_mastery: "更新掌握度",
-          create_quiz: "生成测验题",
-          generate_card: "生成学习卡片",
-          tavily_search: "网络搜索",
-          arxiv_search: "搜索论文",
-          web_fetch: "获取网页",
-          read_file: "读取文件",
-          list_dir: "列出目录",
-        };
-        steps.push({
-          type: "tool",
-          tool,
-          step,
-          status: "running",
-          label: `调用工具：${toolLabels[tool] || tool}`,
-        });
-        updateMsg({ steps });
+        // generate_html_card：立即插入 html 占位卡片，右侧只保留短引导
+        if (tool === "generate_html_card") {
+          const cardTitle =
+            (typeof args === "string" ? JSON.parse(args || "{}") : args || {})
+              .title || "知识卡片";
+          addCardPlaceholder(id, cardTitle, "html");
+        }
+        // generate_interactive_viz：立即插入 viz 占位卡片，右侧只保留短引导
+        if (tool === "generate_interactive_viz") {
+          const cardTitle =
+            (typeof args === "string" ? JSON.parse(args || "{}") : args || {})
+              .title || "交互可视化";
+          addCardPlaceholder(id, cardTitle, "viz");
+        }
+        // create_quiz：立即插入 quiz 占位卡片，右侧只保留短引导
+        if (tool === "create_quiz") {
+          const parsedArgs =
+            typeof args === "string" ? JSON.parse(args || "{}") : args || {};
+          const cardTitle = parsedArgs.question
+            ? parsedArgs.question.slice(0, 20) + "…"
+            : "练习题";
+          addCardPlaceholder(id, cardTitle, "quiz");
+        }
+        updateMsg({ stepBlocks: [...messages.value[idx].stepBlocks] });
         scrollBottom();
       },
-      onToolResult: (tool, result, step) => {
-        if (debugMode) {
+
+      onToolResult: (id, tool, args, result, step) => {
+        if (debugMode)
           console.log("[DEBUG] onToolResult:", {
+            id,
             tool,
             step,
-            result:
-              typeof result === "string"
-                ? result.slice(0, 200) + (result.length > 200 ? "..." : "")
-                : result,
+            result: typeof result === "string" ? result.slice(0, 200) : result,
           });
+        const tc =
+          getToolCall(id) ||
+          (() => {
+            // 兜底：如果没有找到，从 step 的 block 里找同名工具
+            const blk = getOrCreateBlock(step);
+            return blk.toolCalls.find((t) => t.tool === tool);
+          })();
+        if (tc) {
+          tc.status = "done";
+          tc.title = `✓ ${toolLabels[tool] || tool}`;
+          tc.collapsed = true; // 完成后自动折叠
+          // 生成结果摘要（截取前 120 字符）
+          const resultStr =
+            typeof result === "string" ? result : JSON.stringify(result);
+          tc.resultSummary =
+            resultStr.slice(0, 120) + (resultStr.length > 120 ? "…" : "");
         }
-        const steps = [...(messages.value[idx].steps || [])];
-        const s = steps.find(
-          (s) => s.type === "tool" && s.tool === tool && s.step === step,
-        );
-        if (s) s.status = "done";
-        // 同时把 thinking 步骤也标为 done
-        steps
-          .filter((s) => s.type === "thinking" && s.step === step)
-          .forEach((s) => (s.status = "done"));
-        updateMsg({ steps });
-        // create_node 返回 created:false 时（节点已存在），也给用户一个提示
+        // 同时把同 step 的 think 块标为 done
+        const blk = messages.value[idx].stepBlocks.find((b) => b.step === step);
+        if (blk?.think) blk.think.status = "done";
+        updateMsg({ stepBlocks: [...messages.value[idx].stepBlocks] });
+        // generate_html_card：将占位卡片关联到真实 file_id
+        if (tool === "generate_html_card") {
+          try {
+            const data =
+              typeof result === "string" ? JSON.parse(result) : result;
+            if (data?.file_id) {
+              const cardArgs =
+                typeof args === "string"
+                  ? JSON.parse(args || "{}")
+                  : args || {};
+              resolveCardSlot(id, data.file_id, cardArgs.title || "", "html");
+            }
+          } catch {
+            /* result 不是 JSON，占位卡片保持 loading 状态 */
+          }
+        }
+        // generate_interactive_viz：result 直接是 viz_id 字符串
+        if (tool === "generate_interactive_viz") {
+          try {
+            const vizId = typeof result === "string" ? result.trim() : "";
+            if (vizId && !vizId.startsWith("Error")) {
+              const cardArgs =
+                typeof args === "string"
+                  ? JSON.parse(args || "{}")
+                  : args || {};
+              resolveCardSlot(id, vizId, cardArgs.title || "", "viz");
+            }
+          } catch {
+            /* 解析失败，占位卡片保持 loading 状态 */
+          }
+        }
+        // create_quiz：result 包含 quiz_id，关联到占位卡片，并加入当前批次
+        if (tool === "create_quiz") {
+          try {
+            const data =
+              typeof result === "string" ? JSON.parse(result) : result;
+            if (data?.quiz_id) {
+              const cardArgs =
+                typeof args === "string"
+                  ? JSON.parse(args || "{}")
+                  : args || {};
+              const cardTitle = cardArgs.question
+                ? cardArgs.question.slice(0, 20) + "…"
+                : "练习题";
+              resolveCardSlot(id, data.quiz_id, cardTitle, "quiz");
+              // 加入当前批次，等待用户作答
+              pendingQuizBatch.value.set(data.quiz_id, {
+                question: cardArgs.question || "练习题",
+                options: cardArgs.options || [],
+                answered: false,
+                result: null,
+              });
+            }
+          } catch {
+            /* 解析失败，占位卡片保持 loading 状态 */
+          }
+        }
+        // create_node 返回 created:false 时给用户提示
         if (tool === "create_node") {
           try {
             const data =
@@ -3501,33 +2011,41 @@ async function sendWithSSE(text) {
               });
               updateMsg({ events });
             }
-          } catch {
-            console.error("create_node result 解析失败:", result);
+          } catch (e) {
+            console.error("create_node result 解析失败:", result, e);
           }
         }
       },
+
       onTextReply: (text) => {
-        if (debugMode) {
-          console.log("[DEBUG] onTextReply:", { text });
+        if (debugMode) console.log("[DEBUG] onTextReply:", { text });
+        if (!fullContent) {
+          // 非流式兑底：内容一次性到位，触发淡入动画
+          fullContent = text;
+          updateMsg({
+            content: fullContent,
+            html: renderMd(fullContent),
+            ready: false,
+            time: now(),
+          });
+          nextTick(() => updateMsg({ ready: true }));
+        } else {
+          // 流式兑底：内容已经存在，只确保 ready 状态正确
+          updateMsg({ ready: true });
         }
-        fullContent += text;
-        updateMsg({
-          content: fullContent,
-          html: renderMd(fullContent),
-          time: now(),
-        });
         scrollBottom();
       },
       onFileCreated: (fileId) => {
         if (debugMode) {
           console.log("[DEBUG] onFileCreated:", { fileId });
         }
-        // 追加 PDF 卡片到左侧展示区
-        addPdfCard(fileId, `${currentTopic.value} 卡片`);
+        // generate_card 的卡片填充完全由 onToolResult → resolveCardSlot 负责。
+        // onFileCreated 早于 onToolResult 到达（后端先 yield FileCreatedEvent），
+        // 此时占位卡片的 fileId 还是 null，不能在这里做任何卡片操作，否则会重复 push。
+        // 这里只负责添加业务事件标签，供 UI 展示。
         const events = [...(messages.value[idx].events || [])];
         events.push({ type: "file_created", fileId });
         updateMsg({ events });
-        // 更新 context-strip 显示
         nextTick();
       },
       onNodeCreated: (nodeId, title) => {
@@ -3555,15 +2073,28 @@ async function sendWithSSE(text) {
         updateMsg({ events });
       },
       onDone: () => {
-        if (debugMode) {
-          console.log("[DEBUG] onDone: 请求完成");
-        }
-        // 把所有 running 步骤标为 done
-        const steps = (messages.value[idx].steps || []).map((s) => ({
-          ...s,
-          status: "done",
-        }));
-        updateMsg({ steps });
+        if (debugMode) console.log("[DEBUG] onDone: 请求完成");
+        // 把所有 running/calling/pending 状态标为 done，think 块自动折叠
+        const stepBlocks = (messages.value[idx].stepBlocks || []).map(
+          (blk) => ({
+            ...blk,
+            think: blk.think
+              ? { ...blk.think, status: "done", collapsed: true }
+              : null,
+            toolCalls: blk.toolCalls.map((tc) => ({
+              ...tc,
+              status: tc.status === "done" ? "done" : "done",
+              collapsed: true,
+            })),
+          }),
+        );
+        // 确保最终回复可见（兑底：如果 text_reply 没有触发 ready）
+        updateMsg({
+          stepBlocks,
+          content: fullContent,
+          html: renderMd(fullContent),
+          ready: true,
+        });
         sseController = null;
         resolve();
       },
@@ -3591,9 +2122,69 @@ async function sendLocal(errMsg) {
     thinking: false,
     content: tip,
     html: tip,
+    ready: true,
     time: now(),
-    steps: [],
+    stepBlocks: [],
     events: [],
+  };
+}
+
+// ── stepBlocks 辅助 ──────────────────────────────────────────────
+// 用 Map 缓存各滚动区域的 DOM 引用，key 分别是 step（think）或 id（args/logs）
+const _thinkRefs = new Map();
+const _argsRefs = new Map();
+const _logsRefs = new Map();
+
+function setThinkRef(step, el) {
+  if (el) _thinkRefs.set(step, el);
+  else _thinkRefs.delete(step);
+}
+function setArgsRef(id, el) {
+  if (el) _argsRefs.set(id, el);
+  else _argsRefs.delete(id);
+}
+function setLogsRef(id, el) {
+  if (el) _logsRefs.set(id, el);
+  else _logsRefs.delete(id);
+}
+
+function scrollArgsRef(id) {
+  const el = _argsRefs.get(id);
+  if (el) el.scrollTop = el.scrollHeight;
+}
+function scrollLogsRef(id) {
+  const el = _logsRefs.get(id);
+  if (el) el.scrollTop = el.scrollHeight;
+}
+
+/**
+ * 解析 tool_run 的 content，识别嵌套 agent 事件
+ * content 可能是普通文本，也可能是 JSON 序列化的事件对象
+ */
+function parseRunContent(content) {
+  if (!content) return { type: "text", text: "" };
+  try {
+    const obj = typeof content === "string" ? JSON.parse(content) : content;
+    if (obj && obj.type) {
+      // 嵌套 agent think 事件
+      if (obj.type === "think_chunk" || obj.type === "thinking") {
+        return { type: "agent_think", text: obj.delta || obj.content || "" };
+      }
+      // 嵌套 agent tool 事件
+      if (obj.type === "tool_call" || obj.type === "tool_result") {
+        const label = obj.tool || "";
+        const summary = obj.result
+          ? `${label} → ${String(obj.result).slice(0, 60)}`
+          : label;
+        return { type: "agent_tool", text: summary };
+      }
+    }
+  } catch {
+    /* 不是 JSON，当普通文本处理 */
+  }
+  return {
+    type: "text",
+    text: typeof content === "string" ? content : JSON.stringify(content),
   };
 }
 
@@ -3657,91 +2248,6 @@ onUnmounted(() => {
 
 <style scoped>
 /* ═══ AI 主导模式新增样式 ═══ */
-.im-progress-wrap {
-  background: var(--bg-panel);
-  border-bottom: 1px solid var(--border);
-  padding: 8px 16px;
-  flex-shrink: 0;
-}
-.im-progress-bar {
-  height: 3px;
-  background: var(--bg-hover);
-  border-radius: 2px;
-  overflow: hidden;
-}
-.im-progress-fill {
-  height: 100%;
-  background: var(--gradient-brand);
-  transition: width 0.3s ease;
-}
-.im-stage-indicators {
-  display: flex;
-  gap: 16px;
-  margin-top: 6px;
-  justify-content: center;
-}
-.im-stage-item {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 11px;
-  color: var(--text-dim);
-  opacity: 0.4;
-  transition: all 0.3s;
-}
-.im-stage-item.active {
-  opacity: 1;
-  color: var(--brand-light);
-  transform: scale(1.05);
-}
-.im-stage-item.done {
-  opacity: 0.65;
-  color: var(--text-muted);
-}
-.im-stage-icon {
-  font-size: 14px;
-}
-.im-stage-name {
-  font-weight: 600;
-}
-
-.im-generating {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 14px;
-}
-.im-gen-icon {
-  font-size: 3rem;
-  animation: pulse 1.5s ease infinite;
-}
-.im-gen-title {
-  font-size: 16px;
-  font-weight: 700;
-  color: var(--text-primary);
-}
-.im-gen-topic {
-  font-size: 13px;
-  color: var(--brand-light);
-  background: var(--brand-dim);
-  padding: 3px 14px;
-  border-radius: 20px;
-}
-.im-gen-msg {
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-.im-audio-btn {
-  background: rgba(16, 185, 129, 0.15) !important;
-  color: #10b981 !important;
-  border-color: rgba(16, 185, 129, 0.3) !important;
-  min-width: 28px;
-}
-.im-audio-btn.playing {
-  background: rgba(239, 68, 68, 0.15) !important;
-  color: #ef4444 !important;
-}
 
 .cs-dot.done {
   background: #10b981;
@@ -3751,101 +2257,7 @@ onUnmounted(() => {
 }
 
 /* 右侧面板：大纲+习题+日志 tabs */
-.im-sidebar-inner {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-}
-.im-tabs {
-  display: flex;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-.im-tabs button {
-  flex: 1;
-  padding: 10px;
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  color: var(--text-muted);
-  font-size: 12px;
-  cursor: pointer;
-  transition: var(--transition);
-  position: relative;
-}
-.im-tabs button.active {
-  color: var(--brand-light);
-  border-bottom-color: var(--brand);
-}
-.im-log-count {
-  position: absolute;
-  top: 4px;
-  right: 8px;
-  font-size: 9px;
-  background: var(--brand);
-  color: white;
-  padding: 0 4px;
-  border-radius: 8px;
-  min-width: 16px;
-  text-align: center;
-}
-.im-tab-content {
-  flex: 1;
-  overflow-y: auto;
-  padding: 14px;
-}
-.im-placeholder {
-  color: var(--text-dim);
-  font-size: 13px;
-  text-align: center;
-  padding: 40px 0;
-}
 
-.im-ex-content {
-  font-size: 13px;
-  line-height: 1.8;
-  color: var(--text-primary);
-}
-.im-ex-content h1,
-.im-ex-content h2,
-.im-ex-content h3 {
-  font-weight: 600;
-  margin: 12px 0 6px;
-}
-.im-ex-content code {
-  background: rgba(99, 102, 241, 0.15);
-  color: #a5b4fc;
-  padding: 1px 5px;
-  border-radius: 4px;
-  font-size: 12px;
-}
-
-.im-log {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.im-log-item {
-  display: flex;
-  gap: 8px;
-  font-size: 11px;
-  padding: 3px 0;
-  border-bottom: 1px solid var(--border);
-}
-.im-log-item.success .im-log-msg {
-  color: #10b981;
-}
-.im-log-item.error .im-log-msg {
-  color: #ef4444;
-}
-.im-log-time {
-  color: var(--text-dim);
-  flex-shrink: 0;
-  font-family: monospace;
-}
-.im-log-msg {
-  color: var(--text-secondary);
-}
 .chat-layout {
   display: flex;
   height: 100vh;
@@ -3861,7 +2273,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 48px 24px;
+  padding: 40px 24px;
   z-index: 10;
   background: var(--bg-base);
   color: var(--text-primary);
@@ -3871,34 +2283,34 @@ onUnmounted(() => {
   position: absolute;
   inset: 0;
   background-image:
-    linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
-  background-size: 42px 42px;
-  mask-image: radial-gradient(ellipse at center, #000 35%, transparent 75%);
+    linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse at center, #000 30%, transparent 72%);
   pointer-events: none;
 }
 .te-bg-glow {
   position: absolute;
   border-radius: 50%;
-  filter: blur(100px);
-  opacity: 0.22;
+  filter: blur(120px);
+  opacity: 0.15;
   pointer-events: none;
-  animation: te-drift 18s ease-in-out infinite;
+  animation: te-drift 20s ease-in-out infinite;
 }
 .te-bg-glow-1 {
-  width: 500px;
-  height: 500px;
+  width: 600px;
+  height: 600px;
   background: #6366f1;
-  top: -100px;
-  left: 10%;
+  top: -150px;
+  left: 5%;
 }
 .te-bg-glow-2 {
-  width: 420px;
-  height: 420px;
+  width: 500px;
+  height: 500px;
   background: #a855f7;
-  bottom: -80px;
-  right: 8%;
-  animation-delay: -9s;
+  bottom: -120px;
+  right: 5%;
+  animation-delay: -10s;
 }
 @keyframes te-drift {
   0%,
@@ -3906,114 +2318,86 @@ onUnmounted(() => {
     transform: translate(0, 0) scale(1);
   }
   50% {
-    transform: translate(30px, -20px) scale(1.08);
+    transform: translate(24px, -18px) scale(1.06);
   }
 }
 
-/* 飘散云朵 */
+/* 飘散云朵（背景装饰，保留但降低存在感） */
 .te-clouds {
   position: absolute;
   inset: 0;
   pointer-events: none;
   z-index: 1;
+  opacity: 0.45;
 }
 .te-cloud {
   pointer-events: auto;
   position: absolute;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 18px;
+  gap: 6px;
+  padding: 7px 14px;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 999px;
-  color: var(--text-secondary);
+  color: var(--text-muted);
+  font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  box-shadow:
-    0 8px 30px rgba(99, 102, 241, 0.08),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06);
-  transition:
-    border-color 0.25s,
-    color 0.25s,
-    background 0.25s,
-    box-shadow 0.25s;
+  backdrop-filter: blur(8px);
+  transition: opacity 0.2s;
   animation: te-float ease-in-out infinite;
   will-change: transform;
   white-space: nowrap;
   transform: scale(var(--jitter, 1)) rotate(var(--rot, 0deg));
 }
-.te-cloud::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: radial-gradient(
-    circle at 30% 20%,
-    rgba(255, 255, 255, 0.12),
-    transparent 60%
-  );
-  pointer-events: none;
-}
 .te-cloud-xs {
-  font-size: 11px;
-  padding: 5px 11px;
-  opacity: 0.6;
+  font-size: 10px;
+  padding: 4px 10px;
+  opacity: 0.5;
 }
 .te-cloud-sm {
-  font-size: 12.5px;
-  padding: 7px 14px;
-  opacity: 0.78;
+  font-size: 11px;
+  padding: 5px 12px;
+  opacity: 0.65;
 }
 .te-cloud-md {
-  font-size: 14px;
-  padding: 10px 18px;
-  opacity: 0.9;
+  font-size: 12px;
+  padding: 7px 14px;
+  opacity: 0.8;
 }
 .te-cloud-lg {
-  font-size: 16px;
-  padding: 13px 24px;
-  opacity: 0.95;
-  font-weight: 600;
+  font-size: 13px;
+  padding: 8px 16px;
+  opacity: 0.9;
 }
 .te-cloud-xl {
-  font-size: 19px;
-  padding: 16px 30px;
-  opacity: 1;
-  font-weight: 700;
-}
-.te-cloud-xs .te-cloud-emoji {
-  font-size: 13px;
-}
-.te-cloud-sm .te-cloud-emoji {
   font-size: 14px;
+  padding: 10px 20px;
+  opacity: 1;
+}
+.te-cloud-xs .te-cloud-emoji,
+.te-cloud-sm .te-cloud-emoji {
+  font-size: 12px;
 }
 .te-cloud-md .te-cloud-emoji {
-  font-size: 16px;
+  font-size: 13px;
 }
-.te-cloud-lg .te-cloud-emoji {
-  font-size: 20px;
-}
+.te-cloud-lg .te-cloud-emoji,
 .te-cloud-xl .te-cloud-emoji {
-  font-size: 24px;
+  font-size: 15px;
 }
 .te-cloud:hover {
+  opacity: 1 !important;
   color: var(--text-primary);
   border-color: var(--border-active);
-  background: var(--brand-dim);
-  transform: translateY(-4px) scale(calc(var(--jitter, 1) * 1.08)) rotate(0deg) !important;
   animation-play-state: paused;
-  box-shadow: 0 14px 40px rgba(99, 102, 241, 0.25);
-  opacity: 1 !important;
   z-index: 3;
 }
 .te-cloud.active {
-  color: #fff;
-  background: var(--gradient-brand);
-  border-color: transparent;
-  box-shadow: 0 10px 32px rgba(99, 102, 241, 0.45);
+  color: var(--brand-light);
+  border-color: var(--border-active);
+  background: var(--brand-dim);
   opacity: 1 !important;
 }
 @keyframes te-float {
@@ -4021,15 +2405,15 @@ onUnmounted(() => {
     transform: translate(0, 0) scale(var(--jitter, 1)) rotate(var(--rot, 0deg));
   }
   25% {
-    transform: translate(6px, -10px) scale(var(--jitter, 1))
+    transform: translate(5px, -8px) scale(var(--jitter, 1))
       rotate(var(--rot, 0deg));
   }
   50% {
-    transform: translate(-4px, -16px) scale(var(--jitter, 1))
+    transform: translate(-3px, -14px) scale(var(--jitter, 1))
       rotate(var(--rot, 0deg));
   }
   75% {
-    transform: translate(-8px, -6px) scale(var(--jitter, 1))
+    transform: translate(-6px, -5px) scale(var(--jitter, 1))
       rotate(var(--rot, 0deg));
   }
   100% {
@@ -4042,42 +2426,45 @@ onUnmounted(() => {
   position: relative;
   z-index: 2;
   width: 100%;
-  max-width: 920px;
+  max-width: 760px;
   text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
 }
 
 .te-head {
-  margin-bottom: 28px;
+  margin-bottom: 32px;
 }
 .te-tag {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 14px;
+  padding: 4px 12px;
   border-radius: 999px;
   background: var(--brand-dim);
   color: var(--brand-light);
   border: 1px solid var(--border-active);
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.8px;
-  margin-bottom: 22px;
-  backdrop-filter: blur(10px);
+  letter-spacing: 0.6px;
+  margin-bottom: 20px;
 }
 .te-dot {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
   background: var(--brand-light);
-  box-shadow: 0 0 8px var(--brand-light);
+  box-shadow: 0 0 6px var(--brand-light);
   animation: pulse 1.6s infinite;
 }
 .te-title {
-  font-size: 44px;
+  font-size: 40px;
   font-weight: 800;
-  line-height: 1.25;
-  letter-spacing: -1px;
-  margin: 0 0 18px;
+  line-height: 1.2;
+  letter-spacing: -1.5px;
+  margin: 0 0 14px;
   color: var(--text-primary);
 }
 .te-title-grad {
@@ -4088,48 +2475,47 @@ onUnmounted(() => {
 }
 .te-sub {
   color: var(--text-secondary);
-  font-size: 15px;
-  max-width: 620px;
+  font-size: 14px;
   margin: 0 auto;
-  line-height: 1.9;
+  line-height: 1.7;
 }
 .te-sub em {
   color: var(--brand-light);
   font-style: normal;
   font-weight: 600;
 }
-.te-sub-2 {
-  margin-top: 12px;
-  color: var(--text-muted);
-  font-size: 14px;
-  font-style: italic;
-}
 
 /* 输入框 */
 .te-input-wrap {
-  margin: 32px auto 36px;
-  max-width: 640px;
+  width: 100%;
+  max-width: 600px;
+  margin: 0 0 24px;
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
   background: var(--bg-card);
   border: 1.5px solid var(--border);
-  border-radius: 18px;
-  padding: 16px 20px;
+  border-radius: 14px;
+  padding: 14px 18px;
   transition: var(--transition);
   backdrop-filter: blur(14px);
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.15);
 }
 .te-input-wrap.focused,
 .te-input-wrap.filled {
   border-color: var(--border-active);
   box-shadow:
-    0 0 0 5px rgba(99, 102, 241, 0.12),
-    0 12px 40px rgba(99, 102, 241, 0.15);
+    0 0 0 4px rgba(99, 102, 241, 0.1),
+    0 8px 32px rgba(99, 102, 241, 0.12);
 }
 .te-input-ico {
-  color: var(--brand-light);
+  color: var(--text-muted);
   display: flex;
+  flex-shrink: 0;
+}
+.te-input-wrap.focused .te-input-ico,
+.te-input-wrap.filled .te-input-ico {
+  color: var(--brand-light);
 }
 .te-input {
   flex: 1;
@@ -4137,197 +2523,330 @@ onUnmounted(() => {
   border: 0;
   outline: 0;
   color: var(--text-primary);
-  font-size: 17px;
+  font-size: 15px;
   font-family: inherit;
   font-weight: 500;
+  min-width: 0;
 }
 .te-input::placeholder {
   color: var(--text-dim);
   font-weight: 400;
-  font-style: italic;
 }
-.te-input-hint {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 12px;
-  color: var(--text-muted);
-  padding: 5px 12px;
-  border-radius: 999px;
-  background: var(--bg-hover);
-  white-space: nowrap;
-}
-.te-input-hint.ok {
-  background: rgba(16, 185, 129, 0.12);
-  color: #10b981;
-}
-
-/* 两个模式卡片 */
-.te-modes {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 20px;
-  text-align: left;
-}
-.te-mode {
+.te-input-clear {
   all: unset;
   cursor: pointer;
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  padding: 30px;
-  background: var(--bg-card);
-  border: 1.5px solid var(--border);
-  border-radius: 22px;
-  transition: var(--transition);
-  overflow: hidden;
-  backdrop-filter: blur(14px);
-}
-.te-mode::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(
-    circle at top right,
-    var(--brand-dim),
-    transparent 60%
-  );
-  opacity: 0;
-  transition: opacity 0.3s;
-  pointer-events: none;
-}
-.te-mode:not(:disabled):hover {
-  border-color: var(--border-active);
-  transform: translateY(-6px);
-  box-shadow: 0 24px 70px rgba(99, 102, 241, 0.2);
-}
-.te-mode:not(:disabled):hover::before {
-  opacity: 1;
-}
-.te-mode:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-.te-mode.ready {
-  border-color: var(--border-hover);
-}
-.te-mode-b::before {
-  background: radial-gradient(
-    circle at top right,
-    rgba(168, 85, 247, 0.22),
-    transparent 60%
-  );
-}
-.te-mode-icon {
-  width: 54px;
-  height: 54px;
-  border-radius: 16px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 30px;
-  background: var(--brand-dim);
-  border: 1px solid var(--border-active);
-}
-.te-mode-b .te-mode-icon {
-  background: rgba(168, 85, 247, 0.14);
-  border-color: rgba(168, 85, 247, 0.45);
-}
-.te-mode-title {
-  font-size: 22px;
-  font-weight: 700;
-  color: var(--text-primary);
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  letter-spacing: -0.3px;
-}
-.te-mode-tag {
-  font-size: 10px;
-  font-weight: 600;
-  padding: 3px 9px;
-  border-radius: 999px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
   background: var(--bg-hover);
-  color: var(--text-secondary);
-  letter-spacing: 0.5px;
-}
-.te-mode-tag.hot {
-  background: linear-gradient(135deg, #f59e0b, #ef4444);
-  color: #fff;
-}
-.te-mode-desc {
-  font-size: 13px;
-  color: var(--text-secondary);
-  line-height: 1.8;
-}
-.te-mode-feats {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-}
-.te-mode-feats li {
-  font-size: 12.5px;
   color: var(--text-muted);
-  line-height: 1.6;
-}
-.te-mode-cta {
-  margin-top: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 11px 18px;
-  border-radius: 12px;
-  background: var(--bg-hover);
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-weight: 600;
-  align-self: flex-start;
+  flex-shrink: 0;
   transition: var(--transition);
 }
-.te-mode.ready .te-mode-cta {
-  background: var(--gradient-brand);
-  color: #fff;
-  box-shadow: 0 6px 24px rgba(99, 102, 241, 0.4);
+.te-input-clear:hover {
+  background: var(--border);
+  color: var(--text-primary);
 }
-.te-mode.ready .te-mode-cta.alt {
-  background: linear-gradient(135deg, #8b5cf6, #a855f7);
-  box-shadow: 0 6px 24px rgba(168, 85, 247, 0.4);
+.hint-fade-enter-active,
+.hint-fade-leave-active {
+  transition: opacity 0.15s;
+}
+.hint-fade-enter-from,
+.hint-fade-leave-to {
+  opacity: 0;
 }
 
-.te-foot {
-  margin-top: 36px;
-  text-align: center;
+/* 模式切换区域 */
+.te-mode-switch {
+  width: 100%;
+  max-width: 600px;
+  margin-bottom: 20px;
+  border: 1.5px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--bg-card);
+}
+
+/* Tab 栏 */
+.te-tabs {
+  position: relative;
+  display: flex;
+  background: var(--bg-hover);
+  border-bottom: 1.5px solid var(--border);
+  padding: 0;
+  gap: 0;
+}
+.te-tab {
+  all: unset;
+  cursor: pointer;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 13px 16px;
   font-size: 13px;
+  font-weight: 500;
   color: var(--text-muted);
+  transition:
+    color 0.2s,
+    background 0.2s;
+  position: relative;
+  white-space: nowrap;
+  border-right: 1px solid var(--border);
+  opacity: 0.6;
+}
+.te-tab:last-of-type {
+  border-right: none;
+}
+.te-tab:hover:not(.active) {
+  color: var(--text-secondary);
+  opacity: 0.85;
+}
+.te-tab.active {
+  color: var(--text-primary);
+  background: var(--bg-card);
+  font-weight: 700;
+  opacity: 1;
+}
+/* 激活 tab 顶部高亮线 */
+.te-tab.active::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--brand-light);
+  border-radius: 0 0 3px 3px;
+}
+/* 激活 tab 底部遮住分隔线，与面板融合 */
+.te-tab.active::after {
+  content: "";
+  position: absolute;
+  bottom: -2px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--bg-card);
+  z-index: 1;
+}
+.te-tab-hot {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: linear-gradient(135deg, #f59e0b, #ef4444);
+  color: #fff;
   letter-spacing: 0.5px;
-  font-style: italic;
+}
+.te-tab-indicator {
+  display: none;
+}
+
+/* 内容面板 */
+.te-panel {
+  background: var(--bg-card);
+  border: none;
+  border-radius: 0;
+  padding: 18px 20px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.te-panel-feats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.te-panel-feat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 6px;
+  padding: 12px 8px;
+  border-radius: 10px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  transition:
+    border-color 0.2s,
+    background 0.2s;
+}
+.te-panel-feat:hover {
+  background: var(--bg-secondary, rgba(99, 102, 241, 0.04));
+  border-color: var(--brand-light);
+}
+.te-panel-feat-icon {
+  font-size: 22px;
+  line-height: 1;
+}
+.te-panel-feat-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+.te-panel-feat-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+/* 选项开关组 */
+.te-options {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.te-option-toggle {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border: 1px solid rgba(139, 92, 246, 0.2);
+  border-radius: 10px;
+  background: transparent;
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.2s;
+}
+.te-option-toggle:hover {
+  border-color: rgba(139, 92, 246, 0.45);
+  background: rgba(139, 92, 246, 0.05);
+}
+.te-option-toggle input {
+  width: 15px;
+  height: 15px;
+  accent-color: #8b5cf6;
+}
+.te-option-label {
+  color: var(--text-primary);
+  font-weight: 600;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.te-option-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* 启动按钮 */
+.te-start-btn {
+  all: unset;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 11px 0;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
+  transition: var(--transition);
+}
+.te-start-a {
+  background: var(--gradient-brand);
+  color: #fff;
+  box-shadow: 0 4px 20px rgba(99, 102, 241, 0.35);
+}
+.te-start-a:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 28px rgba(99, 102, 241, 0.5);
+}
+.te-start-b {
+  background: linear-gradient(135deg, #8b5cf6, #a855f7);
+  color: #fff;
+  box-shadow: 0 4px 20px rgba(168, 85, 247, 0.35);
+}
+.te-start-b:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 28px rgba(168, 85, 247, 0.5);
+}
+.te-start-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+/* 面板切换动画 */
+.te-panel-enter-active,
+.te-panel-leave-active {
+  transition:
+    opacity 0.18s,
+    transform 0.18s;
+}
+.te-panel-enter-from {
+  opacity: 0;
+  transform: translateY(6px);
+}
+.te-panel-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+
+/* 推荐主题快捷选 */
+.te-suggestions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  max-width: 600px;
+}
+.te-sug-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.te-sug-chip {
+  all: unset;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 5px 12px;
+  transition: var(--transition);
+  white-space: nowrap;
+}
+.te-sug-chip:hover {
+  color: var(--text-primary);
+  border-color: var(--border-active);
+  background: var(--brand-dim);
+}
+.te-sug-chip.active {
+  color: var(--brand-light);
+  border-color: var(--border-active);
+  background: var(--brand-dim);
 }
 
 /* 响应式 */
-@media (max-width: 960px) {
-  .te-clouds {
-    opacity: 0.55;
-  }
-  .te-cloud-xs,
-  .te-cloud-sm {
-    display: none;
-  }
-}
 @media (max-width: 760px) {
-  .te-modes {
-    grid-template-columns: 1fr;
+  .te-panel {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .te-start-btn {
+    justify-content: center;
   }
   .te-title {
-    font-size: 30px;
+    font-size: 28px;
   }
   .te-clouds {
     display: none;
   }
-  .te-sub br {
+  .te-suggestions {
     display: none;
   }
 }
@@ -4475,12 +2994,13 @@ onUnmounted(() => {
 /* 卡片舞台 */
 .slide-stage {
   flex: 1;
+  min-height: 0;
   overflow: hidden;
+  padding: 16px;
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px 32px;
-  position: relative;
 }
 
 /* 连接中骨架 */
@@ -4490,6 +3010,7 @@ onUnmounted(() => {
   gap: 20px;
   width: 100%;
   max-width: 560px;
+  margin: 80px auto 0;
 }
 .og-header {
   display: flex;
@@ -4542,7 +3063,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 12px;
   text-align: center;
-  padding: 40px;
+  padding: 80px 40px;
 }
 .nch-icon {
   font-size: 48px;
@@ -4560,197 +3081,192 @@ onUnmounted(() => {
   max-width: 320px;
 }
 
-/* PDF 主展示区 */
-.pdf-main-view {
+/* 卡片主展示区 */
+.card-main-view {
   width: 100%;
   height: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  position: relative;
-  gap: 10px;
-}
-.pdf-main-canvas {
-  max-width: 100%;
-  max-height: calc(100% - 40px);
-  border-radius: var(--radius-lg);
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
-  background: #fff;
-  display: block;
-}
-.pdf-page-nav {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-full);
-  padding: 4px 10px;
-}
-.ppn-btn {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: var(--bg-hover);
-  border: 1px solid var(--border);
-  color: var(--text-secondary);
-  cursor: pointer;
+  min-height: 0;
+  min-width: 0;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: var(--transition);
+  opacity: 0;
+  transition: opacity 0.3s ease;
 }
-.ppn-btn:hover:not(:disabled) {
-  background: var(--brand-dim);
-  color: var(--brand-light);
-}
-.ppn-btn:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-}
-.ppn-label {
-  font-size: 11px;
-  color: var(--text-muted);
-  min-width: 36px;
-  text-align: center;
+.card-main-view.card-active {
+  opacity: 1;
 }
 
-/* 缩略图行 */
-.thumb-strip {
-  height: 100px;
+/* 卡片画廊（底部，所有卡片缩略图） */
+.card-gallery {
+  height: 130px;
   background: var(--bg-panel);
   border-top: 1px solid var(--border);
   flex-shrink: 0;
   overflow: hidden;
 }
-.ts-scroll {
+.cg-scroll {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 14px;
+  gap: 10px;
+  padding: 10px 14px;
   height: 100%;
   overflow-x: auto;
 }
-.ts-scroll::-webkit-scrollbar {
+.cg-scroll::-webkit-scrollbar {
   height: 3px;
 }
-.ts-scroll::-webkit-scrollbar-thumb {
+.cg-scroll::-webkit-scrollbar-thumb {
   background: var(--border);
   border-radius: 2px;
 }
-.ts-thumb {
+
+/* 单张卡片格子 */
+.cg-card {
   flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
   cursor: pointer;
+  width: 90px;
+  transition: transform 0.15s ease;
+}
+.cg-card:hover:not(.loading) {
+  transform: translateY(-2px);
+}
+.cg-card.loading {
+  cursor: default;
+}
+
+/* 缩略图容器 */
+.cg-thumb-wrap {
+  width: 90px;
+  height: 64px;
   border-radius: 6px;
   border: 2px solid transparent;
   overflow: hidden;
-  transition: var(--transition);
   position: relative;
   background: var(--bg-hover);
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
 }
-.ts-thumb:hover {
+.cg-card:hover:not(.loading) .cg-thumb-wrap {
   border-color: var(--border-active);
 }
-.ts-thumb.active {
+.cg-card.active .cg-thumb-wrap {
   border-color: var(--brand);
   box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.25);
 }
-.ts-canvas {
+.cg-thumb-canvas {
   display: block;
-  height: 72px;
-  width: auto;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
-.ts-page {
-  position: absolute;
-  bottom: 2px;
-  right: 4px;
-  font-size: 9px;
-  color: rgba(255, 255, 255, 0.8);
-  background: rgba(0, 0, 0, 0.45);
-  padding: 1px 4px;
-  border-radius: 3px;
-}
-.ts-loading {
-  width: 120px;
-  height: 80px;
+.cg-thumb-placeholder,
+.cg-type-icon {
+  width: 100%;
+  height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
-  cursor: default;
-}
-.ts-spinner {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  border: 2px solid var(--border);
-  border-top-color: var(--brand);
-  animation: spin 0.8s linear infinite;
-}
-
-/* 底部选卡栏 */
-.card-selector {
-  height: 44px;
-  background: var(--bg-base);
-  border-top: 1px solid var(--border);
-  flex-shrink: 0;
-  overflow: hidden;
-}
-.cs-scroll {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 5px 10px;
-  height: 100%;
-  overflow-x: auto;
-}
-.cs-scroll::-webkit-scrollbar {
-  height: 2px;
-}
-.cs-item {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 4px 10px;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: var(--transition);
-  white-space: nowrap;
-  flex-shrink: 0;
-  border: 1px solid transparent;
-  font-size: 12px;
-  color: var(--text-muted);
-}
-.cs-item:hover {
-  background: var(--bg-hover);
-  color: var(--text-secondary);
-}
-.cs-item.active {
-  background: var(--brand-dim);
-  border-color: var(--border-active);
   color: var(--brand-light);
+  opacity: 0.7;
 }
-.cs-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--text-dim);
-  flex-shrink: 0;
-}
-.cs-item.active .cs-dot {
-  background: var(--brand-light);
-}
-.cs-label {
-  max-width: 120px;
+.cg-type-label {
+  font-size: 9px;
+  color: var(--brand-light);
+  margin-top: 1px;
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.cs-pages {
+.cg-active-badge {
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--brand);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+}
+
+/* 卡片标题 */
+.cg-info {
+  width: 100%;
+  text-align: center;
+}
+.cg-title {
   font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 90px;
+}
+.cg-title--loading {
   color: var(--text-dim);
+}
+.cg-stage-label {
+  font-size: 9px;
+  color: var(--brand-light);
+  margin-top: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 占位骨架屏 */
+.cg-skeleton {
+  width: 90px;
+  height: 64px;
+  border-radius: 6px;
+  border: 2px solid var(--border-active);
+  overflow: hidden;
+  position: relative;
   background: var(--bg-hover);
-  padding: 1px 5px;
-  border-radius: 3px;
+}
+.cg-shimmer {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(99, 102, 241, 0.12) 40%,
+    rgba(99, 102, 241, 0.22) 50%,
+    rgba(99, 102, 241, 0.12) 60%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.6s ease infinite;
+}
+.cg-stage-icon {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--brand-light);
+  opacity: 0.7;
+}
+.cg-spin {
+  animation: spin 1.2s linear infinite;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
 }
 
 .gen-pulse {
@@ -4762,7 +3278,7 @@ onUnmounted(() => {
   animation: pulse 1.2s ease infinite;
 }
 
-/* 时间线导航（已替换为 card-selector，保留备用） */
+/* 时间线导航（已替换为 card-gallery，保留备用） */
 
 /* ══════ 分隔线 ══════ */
 .resizer {
@@ -4817,6 +3333,19 @@ onUnmounted(() => {
 .at-avatar-ring.active {
   opacity: 0.6;
   animation-duration: 1.5s;
+}
+.at-logo-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.at-logo-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 .at-name {
   font-size: 13px;
@@ -4936,8 +3465,8 @@ onUnmounted(() => {
 .msg-row {
   display: flex;
   align-items: flex-end;
-  gap: 6px;
-  margin-bottom: 12px;
+  gap: 10px;
+  margin-bottom: 18px;
 }
 .msg-row.user {
   flex-direction: row-reverse;
@@ -4945,59 +3474,196 @@ onUnmounted(() => {
 .msg-col {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  max-width: 85%;
+  gap: 4px;
+  max-width: 82%;
 }
 .msg-row.user .msg-col {
   align-items: flex-end;
 }
 .msg-bubble {
-  padding: 9px 12px;
-  border-radius: 13px;
-  font-size: 13px;
+  padding: 10px 14px;
+  border-radius: 16px;
+  font-size: 13.5px;
   line-height: 1.75;
+  min-width: 0;
+  word-break: break-word;
 }
 .msg-bubble.assistant {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.09);
   color: var(--text-primary);
-  border-bottom-left-radius: 4px;
-  padding: 10px 16px;
+  border-top-left-radius: 4px;
+  padding: 12px 16px;
+  box-shadow:
+    0 2px 12px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 .msg-bubble.user {
   background: var(--gradient-brand);
   color: white;
-  border-bottom-right-radius: 4px;
+  border-top-right-radius: 4px;
+  box-shadow: 0 2px 16px rgba(99, 102, 241, 0.35);
+}
+/* Light theme 适配 */
+[data-theme="light"] .msg-bubble.assistant {
+  background: #fff;
+  border-color: rgba(0, 0, 0, 0.08);
+  box-shadow:
+    0 2px 12px rgba(0, 0, 0, 0.07),
+    0 1px 3px rgba(0, 0, 0, 0.05);
 }
 
-/* 工具调用进度 */
-.msg-steps {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-bottom: 6px;
+/* ── 消息头像 ─────────────────────────────────────────────── */
+.msg-av {
+  flex-shrink: 0;
 }
-.ms-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  color: var(--text-dim);
+.msg-av .agent-avatar {
+  width: 28px;
+  height: 28px;
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
 }
-.ms-item.done {
-  color: var(--text-muted);
+.msg-av .msg-agent-avatar {
+  background: none;
+  box-shadow: none;
+  overflow: hidden;
 }
-.ms-item.running {
-  color: var(--brand-light);
+.msg-av .msg-agent-avatar img {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  object-fit: cover;
+  display: block;
 }
-.ms-icon {
-  width: 14px;
-  height: 14px;
+.user-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--gradient-brand);
   display: flex;
   align-items: center;
   justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: white;
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
+}
+
+/* ── stepBlocks：执行步骤块 ─────────────────────────────────── */
+.msg-step-blocks {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+/* 每个 step 的容器 */
+.msb-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* ── Think 块 / ToolCall 块 样式已迁移到组件 ThinkBlock.vue / ToolCallBlock.vue ── */
+
+/* 最终回复淡入：只对 assistant 消息生效，用户消息直接可见 */
+.msg-bubble.user .msg-text {
+  opacity: 1;
+}
+.msg-bubble.assistant .msg-text {
+  opacity: 0;
+  animation: none;
+}
+.msg-bubble.assistant .msg-text--ready {
+  animation: msgFadeIn 0.4s ease forwards;
+}
+@keyframes msgFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ── 通用：分区标签 + 滚动区域 ── */
+.msb-section {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.msb-section-label {
+  font-size: 10px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.msb-scroll-area {
+  max-height: 56px; /* 约 2-3 行 */
+  overflow-y: auto;
+  font-size: 11px;
+  font-family: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+  color: var(--text-secondary);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-all;
+  padding: 4px 6px;
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+}
+.msb-scroll-area::-webkit-scrollbar {
+  width: 3px;
+}
+.msb-scroll-area::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 2px;
+}
+
+/* 参数区：蓝色调 */
+.msb-args {
+  color: #7dd3fc;
+}
+/* 日志区：绿色调 */
+.msb-logs {
+  color: var(--text-secondary);
+}
+
+/* 日志条目 */
+.msb-log-item {
+  display: flex;
+  gap: 5px;
+  align-items: flex-start;
+  padding: 1px 0;
+}
+.msb-log-prefix {
   flex-shrink: 0;
 }
+.msb-log-text {
+  flex: 1;
+}
+.msb-log-item.agent_think .msb-log-text {
+  color: #c4b5fd;
+}
+.msb-log-item.agent_tool .msb-log-text {
+  color: #6ee7b7;
+}
+
+/* 结果摘要 */
+.msb-result-text {
+  font-size: 11px;
+  color: var(--text-dim);
+  padding: 3px 6px;
+  background: rgba(52, 211, 153, 0.06);
+  border-radius: 4px;
+  border-left: 2px solid rgba(52, 211, 153, 0.3);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* spin 动画（复用） */
 .ms-spin {
   width: 8px;
   height: 8px;
@@ -5006,6 +3672,10 @@ onUnmounted(() => {
   border-top-color: transparent;
   animation: spin 0.7s linear infinite;
   display: inline-block;
+}
+.ms-spin-green {
+  border-color: #34d399;
+  border-top-color: transparent;
 }
 
 /* 业务事件标签 */
@@ -5066,6 +3736,8 @@ onUnmounted(() => {
 .msg-time {
   font-size: 10px;
   color: var(--text-dim);
+  padding: 0 2px;
+  letter-spacing: 0.02em;
 }
 
 .typing-dots {
@@ -5133,6 +3805,34 @@ onUnmounted(() => {
 .iz-input-wrap.focused {
   border-color: var(--border-active);
   box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+.iz-input-wrap.quiz-locked {
+  border-color: var(--brand, #f59e0b);
+  background: rgba(245, 158, 11, 0.04);
+  cursor: not-allowed;
+}
+/* Quiz 锁定 toast */
+.quiz-lock-toast {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 13px;
+  margin-bottom: 6px;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: var(--radius-md, 8px);
+  font-size: 13px;
+  color: #b45309;
+  font-weight: 500;
+}
+.quiz-toast-enter-active,
+.quiz-toast-leave-active {
+  transition: all 0.25s ease;
+}
+.quiz-toast-enter-from,
+.quiz-toast-leave-to {
+  opacity: 0;
+  transform: translateY(6px);
 }
 .iz-input {
   flex: 1;
@@ -5244,8 +3944,15 @@ onUnmounted(() => {
 }
 .msg-bubble.assistant .msg-text ul,
 .msg-bubble.assistant .msg-text ol {
-  padding-left: 18px;
+  padding-left: 1.5em;
   margin: 6px 0;
+  list-style-position: outside;
+}
+.msg-bubble.assistant .msg-text ul {
+  list-style-type: disc;
+}
+.msg-bubble.assistant .msg-text ol {
+  list-style-type: decimal;
 }
 .msg-bubble.assistant .msg-text li {
   margin: 3px 0;
@@ -5313,410 +4020,20 @@ onUnmounted(() => {
 }
 
 /* ═══ 智流 Agent 对话 ═══ */
-.im-agent-chat {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  margin: -14px;
-}
-.im-agent-messages {
-  flex: 1;
-  overflow-y: auto;
-  padding: 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.im-agent-welcome {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  padding: 30px 0;
-  text-align: center;
-  flex: 1;
-}
-.im-agent-welcome-icon {
-  font-size: 36px;
-}
-.im-agent-welcome-title {
-  font-size: 15px;
-  font-weight: 700;
-  color: var(--text-primary);
-}
-.im-agent-welcome-desc {
-  font-size: 12px;
-  color: var(--text-muted);
-}
-.im-agent-quick-list {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  width: 100%;
-  margin-top: 8px;
-}
-.im-agent-quick {
-  padding: 7px 11px;
-  border-radius: var(--radius-sm);
-  background: var(--bg-hover);
-  border: 1px solid var(--border);
-  color: var(--text-secondary);
-  font-size: 11px;
-  cursor: pointer;
-  text-align: left;
-  transition: var(--transition);
-}
-.im-agent-quick:hover {
-  background: var(--brand-dim);
-  color: var(--brand-light);
-  border-color: var(--border-active);
-}
-
-.im-agent-msg {
-  display: flex;
-  align-items: flex-end;
-  gap: 6px;
-}
-.im-agent-msg.user {
-  flex-direction: row-reverse;
-}
-.im-agent-msg-bubble {
-  padding: 8px 11px;
-  border-radius: 12px;
-  font-size: 12px;
-  line-height: 1.7;
-  max-width: 88%;
-}
-.im-agent-msg-bubble.assistant {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  color: var(--text-primary);
-  border-bottom-left-radius: 4px;
-}
-.im-agent-msg-bubble.user {
-  background: var(--gradient-brand);
-  color: white;
-  border-bottom-right-radius: 4px;
-}
-.im-agent-msg-bubble .msg-text {
-  font-size: 12px;
-}
-
-.im-agent-input-zone {
-  padding: 8px 10px;
-  border-top: 1px solid var(--border);
-  flex-shrink: 0;
-}
-.im-agent-input-wrap {
-  display: flex;
-  align-items: flex-end;
-  gap: 6px;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: 6px 6px 6px 10px;
-}
-.im-agent-input {
-  flex: 1;
-  background: transparent;
-  border: none;
-  outline: none;
-  color: var(--text-primary);
-  font-size: 12px;
-  line-height: 1.5;
-  resize: none;
-  font-family: inherit;
-  max-height: 80px;
-}
-.im-agent-input::placeholder {
-  color: var(--text-dim);
-}
-.im-agent-send {
-  width: 26px;
-  height: 26px;
-  border-radius: 6px;
-  background: var(--bg-hover);
-  border: 1px solid var(--border);
-  color: var(--text-dim);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: var(--transition);
-  flex-shrink: 0;
-}
-.im-agent-send.active {
-  background: var(--gradient-brand);
-  border-color: transparent;
-  color: white;
-}
 
 /* ═══ 习题美化 ═══ */
-.im-quiz-container {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.imq-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
-}
-.imq-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0;
-}
-.imq-stats {
-  display: flex;
-  gap: 8px;
-}
-.imq-stat {
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 10px;
-}
-.imq-stat.correct {
-  background: rgba(16, 185, 129, 0.1);
-  color: #10b981;
-}
-.imq-stat.wrong {
-  background: rgba(239, 68, 68, 0.1);
-  color: #ef4444;
-}
 
 /* ── 进度条 ── */
-.imq-progress-bar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 14px;
-}
-.imq-progress-dots {
-  display: flex;
-  gap: 4px;
-  flex-wrap: wrap;
-}
-.imq-dot {
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  background: var(--bg-hover);
-  border: 2px solid var(--border);
-  color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 600;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-.imq-dot.active {
-  border-color: var(--brand);
-  background: var(--brand-dim);
-  color: var(--brand-light);
-}
-.imq-dot.answered {
-  background: var(--brand);
-  border-color: var(--brand);
-  color: white;
-}
-.imq-progress-text {
-  font-size: 11px;
-  color: var(--text-muted);
-  white-space: nowrap;
-}
 
 /* ── 题目卡片 ── */
-.imq-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: 18px;
-}
-.imq-card-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 12px;
-}
-.imq-card-type {
-  font-size: 10px;
-  font-weight: 600;
-  padding: 3px 10px;
-  border-radius: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-.imq-card-type.choice {
-  background: rgba(99, 102, 241, 0.12);
-  color: #6366f1;
-}
-.imq-card-type.fill {
-  background: rgba(16, 185, 129, 0.12);
-  color: #10b981;
-}
-.imq-card-type.text {
-  background: rgba(245, 158, 11, 0.12);
-  color: #f59e0b;
-}
-.imq-card-section {
-  font-size: 11px;
-  color: var(--text-muted);
-  flex: 1;
-  text-align: center;
-}
-.imq-card-num {
-  font-size: 11px;
-  color: var(--text-muted);
-}
-.imq-card-question {
-  font-size: 14px;
-  color: var(--text-primary);
-  line-height: 1.8;
-  margin-bottom: 16px;
-}
-.imq-card-question p {
-  margin: 0;
-}
 
 /* ── 选项 ── */
-.imq-card-options {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-bottom: 16px;
-}
-.imq-card-opt {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 12px 14px;
-  border-radius: var(--radius-sm);
-  border: 1.5px solid var(--border);
-  cursor: pointer;
-  transition: all 0.2s;
-}
-.imq-card-opt:hover {
-  background: var(--bg-hover);
-  border-color: var(--border-active);
-  transform: translateX(2px);
-}
-.imq-card-opt.selected {
-  border-color: var(--brand);
-  background: var(--brand-dim);
-  box-shadow: 0 0 0 1px var(--brand);
-}
-.imq-card-opt-letter {
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background: var(--bg-hover);
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 700;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  transition: all 0.2s;
-}
-.imq-card-opt-letter.selected {
-  background: var(--brand);
-  color: white;
-}
-.imq-card-opt-text {
-  font-size: 13px;
-  color: var(--text-secondary);
-  line-height: 1.6;
-  padding-top: 2px;
-}
-.imq-card-opt-text p {
-  margin: 0;
-}
 
 /* ── 填空/简答输入 ── */
-.imq-card-input textarea {
-  width: 100%;
-  background: var(--bg-base);
-  border: 1.5px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 10px 12px;
-  color: var(--text-primary);
-  font-size: 13px;
-  font-family: inherit;
-  resize: vertical;
-  outline: none;
-  transition: border-color 0.2s;
-  margin-bottom: 16px;
-}
-.imq-card-input textarea:focus {
-  border-color: var(--brand);
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
-}
 
 /* ── 翻页 ── */
-.imq-card-nav {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-}
-.imq-nav-btn {
-  padding: 8px 18px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: var(--bg-card);
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-.imq-nav-btn:hover:not(:disabled) {
-  background: var(--bg-hover);
-  border-color: var(--border-active);
-}
-.imq-nav-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-.imq-nav-btn.primary {
-  background: var(--brand);
-  border-color: var(--brand);
-  color: white;
-}
-.imq-nav-btn.primary:hover:not(:disabled) {
-  opacity: 0.9;
-}
-.imq-nav-btn.submit {
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
-  border: none;
-  color: white;
-  padding: 10px 22px;
-  font-size: 13px;
-  font-weight: 600;
-  border-radius: var(--radius-md);
-}
-.imq-nav-btn.submit:hover:not(:disabled) {
-  opacity: 0.92;
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
-}
-.imq-unanswered-hint {
-  text-align: center;
-  font-size: 11px;
-  color: #f59e0b;
-  margin-top: 8px;
-}
 
 /* ── 判分结果页 ── */
-.imq-result {
-  animation: fadein 0.3s ease;
-}
 @keyframes fadein {
   from {
     opacity: 0;
@@ -5728,159 +4045,16 @@ onUnmounted(() => {
   }
 }
 
-.imq-result-summary {
-  text-align: center;
-  padding: 20px 0;
-  margin-bottom: 16px;
-}
-.imq-score-circle {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 2px;
-  margin-bottom: 6px;
-}
-.imq-score-num {
-  font-size: 42px;
-  font-weight: 800;
-}
-.imq-score-total {
-  font-size: 16px;
-  font-weight: 500;
-  color: var(--text-muted);
-}
-.imq-score-circle.great .imq-score-num {
-  color: #10b981;
-}
-.imq-score-circle.good .imq-score-num {
-  color: #6366f1;
-}
-.imq-score-circle.low .imq-score-num {
-  color: #ef4444;
-}
-.imq-score-label {
-  font-size: 16px;
-  margin-bottom: 10px;
-}
-.imq-score-bar {
-  display: flex;
-  justify-content: center;
-  gap: 16px;
-}
-
-.imq-result-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-bottom: 16px;
-}
-.imq-result-item {
-  padding: 14px;
-  border-radius: var(--radius-lg);
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-}
-.imq-result-item.correct {
-  border-left: 3px solid #10b981;
-}
-.imq-result-item.wrong {
-  border-left: 3px solid #ef4444;
-}
-.imq-result-num {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-muted);
-  margin-bottom: 6px;
-}
 .icon-correct {
   color: #10b981;
 }
 .icon-wrong {
   color: #ef4444;
 }
-.imq-result-question {
-  font-size: 13px;
-  color: var(--text-primary);
-  line-height: 1.7;
-  margin-bottom: 8px;
-}
-.imq-result-question p {
-  margin: 0;
-}
-.imq-result-answer,
-.imq-result-correct {
-  font-size: 12px;
-  margin-bottom: 4px;
-}
-.imq-result-answer .label,
-.imq-result-correct .label {
-  color: var(--text-muted);
-}
-.imq-result-answer .value {
-  color: var(--text-primary);
-  font-weight: 500;
-}
-.imq-result-correct .value {
-  color: #10b981;
-  font-weight: 600;
-}
-.imq-result-feedback {
-  margin-top: 8px;
-  padding: 8px 12px;
-  border-radius: var(--radius-sm);
-  background: var(--bg-hover);
-  font-size: 12px;
-  color: var(--text-secondary);
-  line-height: 1.6;
-}
-.imq-result-feedback p {
-  margin: 0;
-}
 
 /* ── AI 学习建议 ── */
-.imq-result-advice {
-  margin-top: 14px;
-  padding: 14px;
-  border-radius: var(--radius-lg);
-  background: linear-gradient(
-    135deg,
-    rgba(99, 102, 241, 0.06),
-    rgba(139, 92, 246, 0.06)
-  );
-  border: 1px solid rgba(99, 102, 241, 0.15);
-}
-.imq-advice-title {
-  font-size: 13px;
-  font-weight: 700;
-  color: #6366f1;
-  margin-bottom: 8px;
-}
-.imq-advice-content {
-  font-size: 12px;
-  color: var(--text-secondary);
-  line-height: 1.8;
-}
-.imq-advice-content p {
-  margin: 0 0 6px 0;
-}
 
 /* ── 重做 ── */
-.imq-retry-btn {
-  display: block;
-  margin: 16px auto 0;
-  padding: 10px 28px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border);
-  background: var(--bg-card);
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-.imq-retry-btn:hover {
-  background: var(--bg-hover);
-  border-color: var(--border-active);
-}
 
 /* ── 离开确认弹窗 ─────────────────────────────────────────── */
 .leave-confirm-overlay {
