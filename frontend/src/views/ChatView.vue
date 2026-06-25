@@ -488,44 +488,32 @@
                 <!-- 已完成卡片 -->
                 <template v-else>
                   <div class="cg-thumb-wrap">
-                    <!-- 卡片类型图标 -->
-                    <div class="cg-type-icon">
-                      <svg
-                        v-if="card.cardType === 'html'"
-                        width="22"
-                        height="22"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.5"
-                      >
-                        <rect x="3" y="3" width="18" height="18" rx="2" />
-                        <path d="M3 9h18M9 21V9" />
-                      </svg>
-                      <svg
-                        v-else-if="card.cardType === 'viz'"
-                        width="22"
-                        height="22"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.5"
-                      >
-                        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
-                      </svg>
-                      <svg
-                        v-else-if="card.cardType === 'quiz'"
-                        width="22"
-                        height="22"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.5"
-                      >
-                        <circle cx="12" cy="12" r="10" />
-                        <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
-                        <line x1="12" y1="17" x2="12.01" y2="17" />
-                      </svg>
+                    <!-- HTML 卡片缩略图：直接渲染实际卡片内容的迷你预览 -->
+                    <HtmlCard
+                      v-if="card.cardType === 'html' && card.cardId"
+                      class="cg-html-thumb"
+                      :file-id="card.cardId"
+                      :show-header="false"
+                    />
+                    <div
+                      v-else
+                      class="cg-thumb-fallback"
+                      :class="`type-${card.cardType}`"
+                    >
+                      <div class="cg-thumb-title">{{ card.title }}</div>
+                      <div class="cg-thumb-lines">
+                        <span />
+                        <span />
+                        <span />
+                      </div>
+                      <div class="cg-thumb-chip">
+                        {{
+                          {
+                            viz: "互动",
+                            quiz: "练习",
+                          }[card.cardType] || "卡片"
+                        }}
+                      </div>
                     </div>
                     <div v-if="i === currentCardIndex" class="cg-active-badge">
                       <svg
@@ -1366,20 +1354,16 @@ function resolveCardSlot(slotId, cardId, title, cardType) {
 
 /** 恢复历史会话时加载已有卡片 */
 function loadSessionCards(files) {
-  // 非卡片类型（文档、音频等），排除掉
-  const NON_CARD_TYPES = new Set([
-    "md",
-    "pdf",
-    "audio",
-    "json",
-    "other",
-    "empty",
-  ]);
+  // 后端 file_type 枚举 → 前端 cardType
+  const cardTypeMap = {
+    html_card: "html",
+    pdf_card: "html", // PDF 卡片暂复用 html 渲染逻辑
+    viz: "viz",
+    quiz: "quiz",
+  };
   for (const f of files) {
-    // 兼容旧数据：file_type 缺失或为非卡片类型时跳过
     if (!f.file_id) continue;
-    const cardType =
-      f.file_type && !NON_CARD_TYPES.has(f.file_type) ? f.file_type : null;
+    const cardType = cardTypeMap[f.file_type];
     if (!cardType) continue;
     cards.value.push({
       slotId: f.file_id,
@@ -3160,21 +3144,82 @@ onUnmounted(() => {
   border-color: var(--brand);
   box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.25);
 }
-.cg-thumb-canvas {
+.cg-html-thumb {
   display: block;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  pointer-events: none;
+  background: #fff;
 }
-.cg-thumb-placeholder,
-.cg-type-icon {
+.cg-html-thumb :deep(.html-card-loading) {
+  font-size: 0;
+}
+.cg-html-thumb :deep(.html-card-spinner) {
+  width: 12px;
+  height: 12px;
+}
+.cg-thumb-fallback {
   width: 100%;
   height: 100%;
+  padding: 7px 8px;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--brand-light);
-  opacity: 0.7;
+  flex-direction: column;
+  justify-content: space-between;
+  background: linear-gradient(
+    135deg,
+    rgba(99, 102, 241, 0.18),
+    rgba(168, 85, 247, 0.12)
+  );
+  color: var(--text-primary);
+}
+.cg-thumb-fallback.type-viz {
+  background: linear-gradient(
+    135deg,
+    rgba(20, 184, 166, 0.18),
+    rgba(59, 130, 246, 0.12)
+  );
+}
+.cg-thumb-fallback.type-quiz {
+  background: linear-gradient(
+    135deg,
+    rgba(245, 158, 11, 0.2),
+    rgba(16, 185, 129, 0.12)
+  );
+}
+.cg-thumb-title {
+  font-size: 9px;
+  line-height: 1.25;
+  font-weight: 700;
+  color: var(--text-primary);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.cg-thumb-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.cg-thumb-lines span {
+  height: 3px;
+  border-radius: 99px;
+  background: rgba(99, 102, 241, 0.22);
+}
+.cg-thumb-lines span:nth-child(2) {
+  width: 74%;
+}
+.cg-thumb-lines span:nth-child(3) {
+  width: 52%;
+}
+.cg-thumb-chip {
+  align-self: flex-start;
+  padding: 1px 5px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.76);
+  color: var(--brand);
+  font-size: 8px;
+  font-weight: 700;
 }
 .cg-type-label {
   font-size: 9px;

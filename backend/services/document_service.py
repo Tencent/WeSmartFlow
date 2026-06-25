@@ -114,6 +114,7 @@ class DocumentService:
             storage_key=storage_key,
             file_type=file_ext,
             file_size=len(content),
+            status="pending",
         )
         # 短连接模式下 _execute 已自动 commit，无需手动提交
 

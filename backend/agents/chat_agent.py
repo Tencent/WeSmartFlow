@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from typing import Any, AsyncGenerator
 
-from agent_core.agent.base import AgentStreamEvent
+from agent_core.agent.events import AgentStreamEvent
 from agent_core.agent.react import ReActAgent
 
 logger = logging.getLogger(__name__)

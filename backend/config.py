@@ -6,16 +6,10 @@ from pathlib import Path
 import os
 from dotenv import load_dotenv
 
-# 尝试加载 .env 文件（可选，没有 dotenv 也不崩）
-
-env_file = Path(__file__).parent / ".env"
-if env_file.exists():
-    load_dotenv(env_file)
-else:
-    # fallback: 项目根目录
-    _root_env = Path(__file__).parent.parent / ".env"
-    if _root_env.exists():
-        load_dotenv(_root_env)
+# 加载仓库根目录的 .env（统一来源，模板见 backend/.env.example）
+_root_env = Path(__file__).parent.parent / ".env"
+if _root_env.exists():
+    load_dotenv(_root_env)
 
 
 # 项目根目录（支持通过环境变量 ROOT_DIR 配置，默认为 backend/ 的父目录）

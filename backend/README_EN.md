@@ -108,8 +108,8 @@ brew install --cask mactex-no-gui
 # Download Beamer theme (optional)
 git clone https://github.com/pm25/SimplePlus-BeamerTheme.git SimplePlus-BeamerTheme
 
-# Configure environment variables
-cp .env.example .env
+# Configure environment variables (.env lives in repo root, NOT in backend/)
+cp backend/.env.example .env
 # Edit .env to fill in API keys and other settings
 
 # Start service (default port 8080)

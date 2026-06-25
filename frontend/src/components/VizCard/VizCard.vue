@@ -65,7 +65,7 @@ async function fetchCode() {
 
     // 并行拉取代码和 meta（meta 用于获取标题）
     const [codeRes, metaRes] = await Promise.all([
-      api.getRaw(`/api/viz/${props.vizId}/code`),
+      api.getRaw(`/api/documents/${props.vizId}/raw`),
       props.title
         ? Promise.resolve(null)
         : api.get(`/api/viz/${props.vizId}/meta`).catch(() => null),

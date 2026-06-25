@@ -72,6 +72,37 @@ class NodeRepository(BaseRepository):
         row = self._fetchone("SELECT * FROM nodes WHERE id = ?", (node_id,))
         return _row_to_schema(row) if row else None
 
+    def list_briefs_by_ids(self, node_ids: list[str]) -> list[NodeBrief]:
+        """按 id 批量获取节点轻量视图（含 mastery_level），用于学习状态快照。
+
+        返回顺序按传入 node_ids 的顺序，缺失的 id 自动跳过。
+        """
+        ids = [nid for nid in (node_ids or []) if nid]
+        if not ids:
+            return []
+        placeholders = ",".join("?" * len(ids))
+        rows = self._fetchall(
+            "SELECT id, title, description, tags, relations, mastery_level, due_date, "
+            "last_review_at, repetitions "
+            f"FROM nodes WHERE id IN ({placeholders})",
+            tuple(ids),
+        )
+        by_id = {
+            r["id"]: NodeBrief(
+                id=r["id"],
+                title=r["title"],
+                description=r["description"],
+                tags=_loads(r["tags"], []),
+                relations=[NodeRelation(**x) for x in _loads(r["relations"], [])],
+                mastery_level=r["mastery_level"],
+                last_review_at=r["last_review_at"],
+                repetitions=r["repetitions"] or 0,
+                due_date=r["due_date"],
+            )
+            for r in rows
+        }
+        return [by_id[nid] for nid in ids if nid in by_id]
+
     def find_by_title(self, user_id: str, title: str) -> Optional[str]:
         """按 (user_id, title) 查找节点 ID（用于查重）；未找到返回 None。"""
         row = self._fetchone(

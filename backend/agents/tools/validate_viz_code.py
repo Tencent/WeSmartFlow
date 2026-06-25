@@ -100,7 +100,7 @@ class ValidateVizCodeTool(BaseTool):
         "required": ["file_path"],
     }
 
-    def run(self, file_path: str, **_) -> str:
+    def run(self, file_path: str = "", **kwargs) -> str:
         path = Path(file_path)
         if not path.exists():
             return f"Error: 文件不存在 {file_path}"

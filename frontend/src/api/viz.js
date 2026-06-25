@@ -21,11 +21,12 @@ export function generateViz(payload) {
 
 /**
  * 拉取 viz.js 源代码（纯文本）
+ * 返回后端 /api/documents/{viz_id}/raw 的响应内容。
  * @param {string} vizId
  * @returns {Promise<string>}
  */
 export async function fetchVizCode(vizId) {
-  const url = `${BASE_URL}/api/viz/${vizId}/code`;
+  const url = `${BASE_URL}/api/documents/${vizId}/raw`;
   const res = await fetch(url, { headers: authHeaders() });
   if (!res.ok) {
     throw new Error(`加载可视化代码失败: HTTP ${res.status}`);

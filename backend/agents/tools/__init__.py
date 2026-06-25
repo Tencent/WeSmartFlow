@@ -11,6 +11,12 @@ from .create_quiz import CreateQuizTool
 from .generate_card import GenerateCardTool
 from .generate_html_card import GenerateHtmlCardTool
 from .generate_viz import GenerateInteractiveVizTool
+from .kg_tools import (
+    KGProposeMissingConceptTool,
+    KGRecordObservationTool,
+    KGResolveTool,
+    KGSearchTool,
+)
 
 __all__ = [
     "SearchNodesTool",
@@ -21,8 +27,11 @@ __all__ = [
     "UpdateNodeTool",
     "UpdateMasteryTool",
     "CreateQuizTool",
-    "SummarizeProgressTool",
     "GenerateCardTool",
     "GenerateHtmlCardTool",
     "GenerateInteractiveVizTool",
+    "KGSearchTool",
+    "KGResolveTool",
+    "KGProposeMissingConceptTool",
+    "KGRecordObservationTool",
 ]

@@ -25,6 +25,15 @@ from .user import (
     DashboardStats,
     StudyLogSchema,
 )
+from .profile import (
+    ProfileFactSchema,
+    ProfileFactCandidate,
+    ProfileSkillSchema,
+    ProfileOverviewSchema,
+    ProfileFactHistorySchema,
+    effective_confidence,
+    evidence_priority,
+)
 
 __all__ = [
     "NodeSchema",
@@ -51,4 +60,11 @@ __all__ = [
     "UserPreferences",
     "DashboardStats",
     "StudyLogSchema",
+    "ProfileFactSchema",
+    "ProfileFactCandidate",
+    "ProfileSkillSchema",
+    "ProfileOverviewSchema",
+    "ProfileFactHistorySchema",
+    "effective_confidence",
+    "evidence_priority",
 ]

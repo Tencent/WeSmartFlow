@@ -8,6 +8,24 @@ from typing import Literal, Optional
 from .base import BaseSchema
 
 
+# documents.file_type 取值（统一在此处枚举，便于全局对齐）
+#   ─ 用户上传 ─
+#     upload                      用户上传的原始文件（具体格式由 file_name 后缀决定）
+#   ─ AI 生成（chat 工具） ─
+#     html_card                   HTML 知识卡片（主资源 card.html，伴生 images/*.png 等）
+#     viz                         交互式可视化（主资源 viz.js）
+#     pdf_card                    PDF 知识卡片（主资源 card.pdf，伴生 card.tex / images/*）
+#     md_note                     单文件 markdown 笔记
+#   ─ AI 生成（沉浸式课程） ─
+#     course_outline              课程大纲 outline.json
+#     course_plan                 整体学习建议 plan.md
+#     chapter_overview            章节预习手册 overview.md
+#     chapter_pdf                 章节 PDF 讲义
+#     chapter_exercises           章节习题 markdown
+#     chapter_audio               章节音频包（主资源 audio/manifest.json，伴生 frame_xxx.wav）
+#     chapter_notes               章节讲解稿 speaker_notes.json
+
+
 class DocumentSchema(BaseSchema):
     id: str
     user_id: str

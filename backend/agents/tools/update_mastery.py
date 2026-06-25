@@ -36,7 +36,9 @@ class UpdateMasteryTool(BaseTool):
         super().__init__(on_result_hook=on_result_hook)
         self._user_id = user_id
 
-    def run(self, node_id: str, delta: float, reason: str = "") -> str:
+    def run(
+        self, node_id: str = "", delta: float = 0.0, reason: str = "", **kwargs
+    ) -> str:
         with get_db() as conn:
             # 查当前掌採度
             row = conn.execute(

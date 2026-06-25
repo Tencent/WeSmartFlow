@@ -36,7 +36,7 @@ class SearchNodesTool(BaseTool):
         super().__init__()
         self._user_id = user_id
 
-    def run(self, query: str, limit: int = 5) -> str:
+    def run(self, query: str = "", limit: int = 5, **kwargs) -> str:
         with get_db() as conn:
             cursor = conn.execute(
                 """

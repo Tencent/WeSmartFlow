@@ -38,9 +38,13 @@ from services.immersive.agents import build_sub_agents
 from services.immersive.node_extractor import extract_and_persist_nodes
 from services.immersive.persistence import (
     create_session,
-    register_chapter_documents,
-    register_single_chapter_document,
-    register_chapter_overview_md,
+    register_chapter_audio,
+    register_chapter_exercises,
+    register_chapter_notes,
+    register_chapter_overview,
+    register_chapter_pdf,
+    register_course_outline,
+    register_course_plan,
     update_workspace,
     upsert_canvas_block,
     append_session_file,
@@ -54,6 +58,7 @@ from services.immersive.tts import (
 from services.immersive.utils import to_rel_path
 from config import DOCUMENTS_DIR, COURSES_DIR
 from services.llm_factory import get_llm
+from utils.log_safe import safe_log
 
 logger = logging.getLogger(__name__)
 
@@ -132,14 +137,13 @@ def _chapter_artifact_status(
     if checks["overview_md"]:
         files.append(to_rel_path(str(overview_path)))
 
-    audio_rel_dir = to_rel_path(str(audio_dir)) if audio_dir.exists() else ""
+    # audio url 由前端依据 audio_doc_id 自行拼接 /api/documents/{doc_id}/asset/{filename}，
+    # 这里只给 filename 占位（doc_id 在外层 _audit_resume_chapters 阶段补登记后回填）。
     audio_files_data = (
         [
             {
                 "filename": filename,
-                "url": f"/api/immersive/files/{audio_rel_dir}/{filename}"
-                if audio_rel_dir
-                else "",
+                "url": "",
                 "duration_seconds": 0,
                 "success": True,
             }
@@ -643,8 +647,8 @@ def _safe_load_research(research_path: "Path") -> dict:
                     m.group(1),
                 )
                 result["sources"] = [{"title": t, "url": u} for t, u in pairs]
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("解析 sources 字段时出错: %s", e)
     return result
 
 
@@ -1091,21 +1095,6 @@ async def immersive_generate(
 
         layout = UserDataLayout(root=DOCUMENTS_DIR, user_id=user_id)
         layout.ensure_dirs()
-        if user_profile:
-            layout.profile_file.write_text(user_profile, encoding="utf-8")
-        elif (
-            not layout.profile_file.exists()
-            or not layout.profile_file.read_text(encoding="utf-8").strip()
-        ):
-            # 前端未传 user_profile 且 profile.md 为空时，尝试从 DB 同步
-            try:
-                from services import UserService
-
-                user_info = UserService().get_user(user_id)
-                if user_info and hasattr(user_info, "about") and user_info.about:
-                    UserService()._sync_about_to_profile(user_id, user_info.about)
-            except Exception as e:
-                logger.warning("generate 时自动同步 profile 失败: %s", e)
 
         course_slug = f"{_slugify(topic)}_{session_id}"
         course = CourseLayout(course_dir=COURSES_DIR / course_slug)
@@ -1153,20 +1142,17 @@ async def immersive_generate(
         chapters = outline["chapters"]
         total_ch = len(chapters)
 
-        # 读取用户画像用于生成个性化学习建议（带 fallback 到旧全局文件）
-        profile_content = ""
-        try:
-            if layout.profile_file.exists():
-                profile_content = layout.profile_file.read_text(
-                    encoding="utf-8"
-                ).strip()
-            if not profile_content and user_id:
-                # fallback: 旧的全局 profile.md（迁移兼容）
-                legacy_profile = layout.profile_dir / "profile.md"
-                if legacy_profile.exists() and legacy_profile != layout.profile_file:
-                    profile_content = legacy_profile.read_text(encoding="utf-8").strip()
-        except Exception:
-            pass
+        # 读取统一用户画像用于生成个性化学习建议；前端显式传入时作为临时覆盖，不落盘。
+        profile_content = (user_profile or "").strip()
+        if not profile_content:
+            try:
+                from services.profile_service import ProfileMemoryService
+
+                profile_content = (
+                    ProfileMemoryService().build_profile_text(user_id).strip()
+                )
+            except Exception:
+                logger.exception("读取统一画像失败 (user=%s)", safe_log(user_id))
 
         yield sse_event(
             "progress", stage="plan", pct=12, message="📝 正在生成个性化学习建议..."
@@ -1178,6 +1164,18 @@ async def immersive_generate(
         plan_path.write_text(plan_md, encoding="utf-8")
         rel_plan_path = to_rel_path(str(plan_path))
 
+        outline_doc_id = (
+            await asyncio.to_thread(
+                lambda: register_course_outline(
+                    session_id=session_id,
+                    topic=topic,
+                    outline_path=outline_path,
+                    user_id=user_id,
+                )
+            )
+            or ""
+        )
+
         outline_block = {
             "id": "outline",
             "type": "outline",
@@ -1185,6 +1183,7 @@ async def immersive_generate(
             "status": "ready",
             "data": {
                 "outline": outline,
+                "doc_id": outline_doc_id,
                 "outline_path": to_rel_path(str(outline_path)),
             },
         }
@@ -1232,7 +1231,25 @@ async def immersive_generate(
             workspace_patch=workspace_patch,
         )
         upsert_canvas_block(session_id, plan_block, current=True, stage="planned")
-        append_session_file(session_id, rel_plan_path, f"{topic} 个性化学习建议", "md")
+        plan_doc_id = await asyncio.to_thread(
+            lambda: register_course_plan(
+                session_id=session_id,
+                topic=topic,
+                plan_path=plan_path,
+                user_id=user_id,
+            )
+        )
+        if plan_doc_id:
+            plan_block["data"]["doc_id"] = plan_doc_id
+            if outline_doc_id:
+                outline_block["data"]["plan_doc_id"] = plan_doc_id
+            append_session_file(
+                session_id, plan_doc_id, f"{topic} 个性化学习建议", "course_plan"
+            )
+        if outline_doc_id:
+            append_session_file(
+                session_id, outline_doc_id, f"{topic} 课程大纲", "course_outline"
+            )
 
         yield sse_event(
             "progress",
@@ -1318,17 +1335,24 @@ async def immersive_generate(
                     )
                     chapter_md_path = None
 
+                md_doc_id = ""
                 if chapter_md_path is not None:
                     try:
-                        await asyncio.to_thread(
-                            register_chapter_overview_md,
-                            session_id,
-                            topic,
-                            ch_id,
-                            ch_title,
-                            chapter_md_path,
-                            user_id,
-                            [],
+                        md_doc_id = (
+                            await asyncio.to_thread(
+                                lambda p=chapter_md_path, c=ch_id, t=ch_title: (
+                                    register_chapter_overview(
+                                        session_id=session_id,
+                                        topic=topic,
+                                        chapter_id=c,
+                                        chapter_title=t,
+                                        md_path=p,
+                                        user_id=user_id,
+                                        node_ids=[],
+                                    )
+                                ),
+                            )
+                            or ""
                         )
                     except Exception as exc:  # pylint: disable=broad-except
                         logger.warning(
@@ -1347,15 +1371,16 @@ async def immersive_generate(
                         "subtype": "chapter_content",
                         "markdown": chapter_md_content,
                         "md_path": chapter_md_rel,
+                        "doc_id": md_doc_id,
                     },
                 }
                 upsert_canvas_block(session_id, chapter_md_block)
-                if chapter_md_rel:
+                if md_doc_id:
                     append_session_file(
                         session_id,
-                        chapter_md_rel,
+                        md_doc_id,
                         f"第{ch_id}章 {ch_title} · 预习手册",
-                        "md",
+                        "chapter_overview",
                     )
                 yield sse_event(
                     "workspace_update",
@@ -1439,21 +1464,42 @@ async def immersive_generate(
 
             # （预习手册已在 Researcher 完成后推送，此处不再重复生成）
 
-            # ── 2b++. PDF 完成后立即推送给前端 ──────────────────────
+            # ── 2b++. PDF 完成后立即登记 documents + 推送给前端 ───
             pdf_ready = _pdf_is_ready(pdf_path)
             pdf_rel = to_rel_path(str(pdf_path)) if pdf_ready else ""
             num_frames = count_beamer_frames(tex_path)
             pdf_block = None
+            pdf_doc_id = ""
             if pdf_ready:
+                try:
+                    pdf_doc_id = (
+                        await asyncio.to_thread(
+                            lambda: register_chapter_pdf(
+                                session_id=session_id,
+                                topic=topic,
+                                chapter_id=ch_id,
+                                chapter_title=ch_title,
+                                pdf_path=pdf_path,
+                                num_pages=num_frames,
+                                user_id=user_id,
+                                node_ids=[],
+                            ),
+                        )
+                        or ""
+                    )
+                except Exception as exc:  # pylint: disable=broad-except
+                    logger.warning("单章 PDF 登记失败 ch=%s: %s", ch_id, exc)
+
                 pdf_file = {
-                    "file_id": pdf_rel,
-                    "file_type": "pdf",
+                    "file_id": pdf_doc_id or pdf_rel,
+                    "file_type": "chapter_pdf",
                     "title": f"第{ch_id}章 {ch_title}",
                 }
                 all_files_for_session.append(pdf_file)
-                append_session_file(
-                    session_id, pdf_rel, f"第{ch_id}章 {ch_title}", "pdf"
-                )
+                if pdf_doc_id:
+                    append_session_file(
+                        session_id, pdf_doc_id, f"第{ch_id}章 {ch_title}", "chapter_pdf"
+                    )
                 pdf_block = {
                     "id": f"pdf_ch{ch_id}",
                     "type": "pdf",
@@ -1461,11 +1507,13 @@ async def immersive_generate(
                     "status": "ready",
                     "chapter_id": ch_id,
                     "data": {
-                        "url": f"/api/immersive/files/{pdf_rel}",
+                        "url": f"/api/documents/{pdf_doc_id}/raw" if pdf_doc_id else "",
                         "pdf_path": pdf_rel,
+                        "doc_id": pdf_doc_id,
                         "num_pages": num_frames,
                         "audio_enabled": enable_audio,
                         "audio_files": [],  # TTS 尚未完成，后续补充
+                        "audio_doc_id": "",
                     },
                 }
                 upsert_canvas_block(session_id, pdf_block)
@@ -1511,14 +1559,39 @@ async def immersive_generate(
                     "Exercises 完成: 第%d章 (存在=%s)", ch_id, exercises_path.exists()
                 )
 
-                # ── 2c+. 习题完成后立即推送给前端 ────────────────────
+                # ── 2c+. 习题完成后立即登记 documents + 推送给前端 ───
                 ex_rel = (
                     to_rel_path(str(exercises_path)) if exercises_path.exists() else ""
                 )
+                ex_doc_id = ""
                 if exercises_path.exists() and ex_rel:
-                    append_session_file(
-                        session_id, ex_rel, f"第{ch_id}章 {ch_title} 习题", "md"
-                    )
+                    try:
+                        ex_doc_id = (
+                            await asyncio.to_thread(
+                                lambda p=exercises_path, c=ch_id, t=ch_title: (
+                                    register_chapter_exercises(
+                                        session_id=session_id,
+                                        topic=topic,
+                                        chapter_id=c,
+                                        chapter_title=t,
+                                        exercises_path=p,
+                                        user_id=user_id,
+                                        node_ids=[],
+                                    )
+                                ),
+                            )
+                            or ""
+                        )
+                    except Exception as exc:  # pylint: disable=broad-except
+                        logger.warning("单章习题登记失败 ch=%s: %s", ch_id, exc)
+
+                    if ex_doc_id:
+                        append_session_file(
+                            session_id,
+                            ex_doc_id,
+                            f"第{ch_id}章 {ch_title} 习题",
+                            "chapter_exercises",
+                        )
                     quiz_block = {
                         "id": f"quiz_ch{ch_id}_bank",
                         "type": "quiz_batch",
@@ -1528,6 +1601,7 @@ async def immersive_generate(
                         "data": {
                             "source": "exercises_md",
                             "exercises_path": ex_rel,
+                            "doc_id": ex_doc_id,
                             "display_limit": 3,
                             "strategy": "show_2_to_3_questions_first",
                         },
@@ -1547,6 +1621,8 @@ async def immersive_generate(
             tts_pct = int(ch_base_pct + pct_per_chapter * 0.85)
             speaker_notes = []
             audio_results = []
+            audio_doc_id = ""
+            notes_doc_id = ""
 
             if enable_audio and tex_path.exists() and num_frames > 0:
                 yield sse_event(
@@ -1573,6 +1649,47 @@ async def immersive_generate(
                     logger.info(
                         "TTS 完成: 第%d章, %d 段语音", ch_id, len(audio_results)
                     )
+
+                    # 登记讲解稿 / 音频包到 documents
+                    try:
+                        notes_doc_id = (
+                            await asyncio.to_thread(
+                                lambda p=notes_path, c=ch_id, t=ch_title: (
+                                    register_chapter_notes(
+                                        session_id=session_id,
+                                        topic=topic,
+                                        chapter_id=c,
+                                        chapter_title=t,
+                                        notes_path=p,
+                                        user_id=user_id,
+                                    )
+                                ),
+                            )
+                            or ""
+                        )
+                    except Exception as exc:  # pylint: disable=broad-except
+                        logger.warning("speaker_notes 登记失败 ch=%s: %s", ch_id, exc)
+
+                    try:
+                        audio_doc_id = (
+                            await asyncio.to_thread(
+                                lambda d=course.chapter_dir(ch_id) / "audio", c=ch_id, t=ch_title, ar=audio_results, sn=speaker_notes: (
+                                    register_chapter_audio(
+                                        session_id=session_id,
+                                        topic=topic,
+                                        chapter_id=c,
+                                        chapter_title=t,
+                                        audio_dir=d,
+                                        audio_results=ar,
+                                        speaker_notes=sn,
+                                        user_id=user_id,
+                                    )
+                                ),
+                            )
+                            or ""
+                        )
+                    except Exception as exc:  # pylint: disable=broad-except
+                        logger.warning("audio manifest 登记失败 ch=%s: %s", ch_id, exc)
             elif not enable_audio:
                 logger.info("跳过语音生成: 第%d章（用户未启用语音）", ch_id)
 
@@ -1588,13 +1705,15 @@ async def immersive_generate(
             audio_files_data = []
             for r in audio_results:
                 if r.get("success"):
-                    audio_rel_dir = to_rel_path(
-                        str(course.chapter_dir(ch_id) / "audio")
-                    )
+                    filename = r.get("filename", "")
                     audio_files_data.append(
                         {
-                            "filename": r.get("filename", ""),
-                            "url": f"/api/immersive/files/{audio_rel_dir}/{r.get('filename', '')}",
+                            "filename": filename,
+                            "url": (
+                                f"/api/documents/{audio_doc_id}/asset/{filename}"
+                                if audio_doc_id
+                                else ""
+                            ),
                             "duration_seconds": r.get("duration_seconds", 0),
                             "success": True,
                         }
@@ -1603,12 +1722,27 @@ async def immersive_generate(
             # 如果 TTS 生成了音频，更新已推送的 pdf_block 的 audio_files
             if audio_files_data and pdf_block:
                 pdf_block["data"]["audio_files"] = audio_files_data
+                pdf_block["data"]["audio_doc_id"] = audio_doc_id
                 upsert_canvas_block(session_id, pdf_block)
                 yield sse_event(
                     "workspace_update",
                     event="block_updated",
                     session_id=session_id,
                     block=pdf_block,
+                )
+            if audio_doc_id:
+                append_session_file(
+                    session_id,
+                    audio_doc_id,
+                    f"第{ch_id}章 {ch_title} · 音频",
+                    "chapter_audio",
+                )
+            if notes_doc_id:
+                append_session_file(
+                    session_id,
+                    notes_doc_id,
+                    f"第{ch_id}章 {ch_title} · 讲解稿",
+                    "chapter_notes",
                 )
 
             ch_result = {
@@ -1617,28 +1751,20 @@ async def immersive_generate(
                 "knowledge_points": ch_info.get("knowledge_points", []),
                 "pdf_exists": pdf_ready,
                 "pdf_path": pdf_rel,
+                "pdf_doc_id": pdf_doc_id,
                 "exercises_exists": exercises_path.exists(),
                 "exercises_path": ex_rel,
+                "exercises_doc_id": ex_doc_id,
                 "num_frames": num_frames,
                 "speaker_notes_count": len(speaker_notes),
                 "audio_files": audio_files_data,
+                "audio_doc_id": audio_doc_id,
+                "notes_doc_id": notes_doc_id,
                 "images": images,
                 "images_count": len(images),
             }
-            chapter_results.append(ch_result)
 
-            # 立刻把这一章 PDF 登记到 documents 表（即使后续章节失败也能在文档管理看到）
-            try:
-                await asyncio.to_thread(
-                    register_single_chapter_document,
-                    session_id,
-                    topic,
-                    ch_result,
-                    [],  # 节点尚未提取，先以空列表登记，后续阶段会再补
-                    user_id,
-                )
-            except Exception as exc:  # pylint: disable=broad-except
-                logger.warning("单章文档登记失败 ch=%s: %s", ch_id, exc)
+            chapter_results.append(ch_result)
 
             chapter_block_ids = [f"chapter_{ch_id}_status"]
             if pdf_block:
@@ -1655,6 +1781,10 @@ async def immersive_generate(
                 "audio_enabled": enable_audio,
                 "audio_files": audio_files_data,
                 "speaker_notes_count": len(speaker_notes),
+                "pdf_doc_id": pdf_doc_id,
+                "exercises_doc_id": ex_doc_id,
+                "audio_doc_id": audio_doc_id,
+                "notes_doc_id": notes_doc_id,
             }
             workspace_now = update_workspace(session_id)
             workspace_data = workspace_now.get("workspace", {}) or {}
@@ -1763,12 +1893,14 @@ async def immersive_generate(
             "progress", stage="nodes", pct=92, message="🧠 正在抽取知识图谱节点..."
         )
 
+        # 知识图谱抽取与音频开关解耦，保证 LLM 实例始终可用
+        extractor_llm = tts_llm or get_llm(user_id)
         created_nodes = await asyncio.to_thread(
             extract_and_persist_nodes,
             session_id,
             topic,
             chapters,
-            tts_llm,
+            extractor_llm,
             user_id,
         )
 
@@ -1785,15 +1917,25 @@ async def immersive_generate(
         # ── 4. 生成结束（不自动 complete，等用户确认） ──────────
         duration_minutes = max(1, int((time.time() - start_time) / 60))
 
-        # 将每章 PDF 登记到 documents 表（文档管理页面可见）
-        await asyncio.to_thread(
-            register_chapter_documents,
-            session_id,
-            topic,
-            chapter_results,
-            node_ids,
-            user_id,
-        )
+        # 知识节点抽取完成后，回填 node_ids 到本课程已登记的所有章节 doc
+        if node_ids:
+
+            def _backfill_node_ids():
+                from repositories import DocumentRepository as _DR
+
+                _repo = _DR()
+                truncated = node_ids[:15]
+                for ch in chapter_results:
+                    doc_id = ch.get("pdf_doc_id")
+                    if doc_id:
+                        try:
+                            _repo.set_node_ids(doc_id, truncated)
+                        except Exception as exc:  # pylint: disable=broad-except
+                            logger.warning(
+                                "回填 node_ids 失败 doc_id=%s: %s", doc_id, exc
+                            )
+
+            await asyncio.to_thread(_backfill_node_ids)
 
         # 更新 workspace 为 ready 状态（但不标记 session 为 completed）
         update_workspace(
@@ -2052,6 +2194,9 @@ async def immersive_resume(
             pdf_done_path = course.pdf_file(ch_done_id)
             if artifact["checks"].get("pdf"):
                 pdf_rel_done = to_rel_path(str(pdf_done_path))
+                # 这里是从磁盘扫出来的已完成章节，没有现成的 doc_id，推送后由
+                # _audit_resume_chapters / chapters_state 补上。这里只先留空，前端在
+                # workspace.chapters[].pdf_doc_id 有值时会走 documents 接口。
                 pdf_block_done = {
                     "id": f"pdf_ch{ch_done_id}",
                     "type": "pdf",
@@ -2059,11 +2204,13 @@ async def immersive_resume(
                     "status": "ready",
                     "chapter_id": ch_done_id,
                     "data": {
-                        "url": f"/api/immersive/files/{pdf_rel_done}",
+                        "url": "",
                         "pdf_path": pdf_rel_done,
+                        "doc_id": "",
                         "num_pages": artifact["num_frames"],
                         "audio_enabled": enable_audio,
                         "audio_files": artifact["audio_files"],
+                        "audio_doc_id": "",
                     },
                 }
                 upsert_canvas_block(session_id, pdf_block_done)
@@ -2219,6 +2366,29 @@ async def immersive_resume(
 
             if chapter_md_content:
                 chapter_md_rel = to_rel_path(str(overview_path_resume))
+                md_doc_id = ""
+                try:
+                    md_doc_id = (
+                        await asyncio.to_thread(
+                            lambda p=overview_path_resume, c=ch_id, t=ch_title: (
+                                register_chapter_overview(
+                                    session_id=session_id,
+                                    topic=topic,
+                                    chapter_id=c,
+                                    chapter_title=t,
+                                    md_path=p,
+                                    user_id=user_id,
+                                    node_ids=[],
+                                )
+                            ),
+                        )
+                        or ""
+                    )
+                except Exception as exc:  # pylint: disable=broad-except
+                    logger.warning(
+                        "resume: 预习手册 markdown 登记失败 ch=%s: %s", ch_id, exc
+                    )
+
                 chapter_md_block = {
                     "id": f"md_ch{ch_id}",
                     "type": "md",
@@ -2229,13 +2399,14 @@ async def immersive_resume(
                         "subtype": "chapter_content",
                         "markdown": chapter_md_content,
                         "md_path": chapter_md_rel,
+                        "doc_id": md_doc_id,
                     },
                 }
                 upsert_canvas_block(session_id, chapter_md_block)
-                if chapter_md_rel:
+                if md_doc_id:
                     append_session_file(
                         session_id,
-                        chapter_md_rel,
+                        md_doc_id,
                         f"第{ch_id}章 {ch_title} · 预习手册",
                         "md",
                     )
@@ -2371,6 +2542,8 @@ async def immersive_resume(
             num_frames = count_beamer_frames(tex_path)
             speaker_notes = []
             audio_results = []
+            audio_doc_id = ""
+            notes_doc_id = ""
             audio_dir = course.chapter_dir(ch_id) / "audio"
             existing_audio = (
                 sorted(
@@ -2427,6 +2600,53 @@ async def immersive_resume(
                         run_tts_for_chapter, course.chapter_dir(ch_id), speaker_notes
                     )
 
+            # 登记 讲解稿 / 音频包 到 documents（跳过 / 复用 / 新生成都会走进这里）
+            if enable_audio and audio_results:
+                notes_path = course.chapter_dir(ch_id) / "speaker_notes.json"
+                if notes_path.exists() and notes_path.stat().st_size > 0:
+                    try:
+                        notes_doc_id = (
+                            await asyncio.to_thread(
+                                lambda p=notes_path, c=ch_id, t=ch_title: (
+                                    register_chapter_notes(
+                                        session_id=session_id,
+                                        topic=topic,
+                                        chapter_id=c,
+                                        chapter_title=t,
+                                        notes_path=p,
+                                        user_id=user_id,
+                                    )
+                                ),
+                            )
+                            or ""
+                        )
+                    except Exception as exc:  # pylint: disable=broad-except
+                        logger.warning(
+                            "resume: speaker_notes 登记失败 ch=%s: %s", ch_id, exc
+                        )
+                try:
+                    audio_doc_id = (
+                        await asyncio.to_thread(
+                            lambda d=audio_dir, c=ch_id, t=ch_title, ar=audio_results, sn=speaker_notes: (
+                                register_chapter_audio(
+                                    session_id=session_id,
+                                    topic=topic,
+                                    chapter_id=c,
+                                    chapter_title=t,
+                                    audio_dir=d,
+                                    audio_results=ar,
+                                    speaker_notes=sn,
+                                    user_id=user_id,
+                                )
+                            ),
+                        )
+                        or ""
+                    )
+                except Exception as exc:  # pylint: disable=broad-except
+                    logger.warning(
+                        "resume: audio manifest 登记失败 ch=%s: %s", ch_id, exc
+                    )
+
             # ── 收集产物 ──
             images = []
             if images_dir.exists():
@@ -2441,13 +2661,15 @@ async def immersive_resume(
             audio_files_data = []
             for r in audio_results:
                 if r.get("success"):
-                    audio_rel_dir = to_rel_path(
-                        str(course.chapter_dir(ch_id) / "audio")
-                    )
+                    filename = r.get("filename", "")
                     audio_files_data.append(
                         {
-                            "filename": r.get("filename", ""),
-                            "url": f"/api/immersive/files/{audio_rel_dir}/{r.get('filename', '')}",
+                            "filename": filename,
+                            "url": (
+                                f"/api/documents/{audio_doc_id}/asset/{filename}"
+                                if audio_doc_id
+                                else ""
+                            ),
                             "duration_seconds": r.get("duration_seconds", 0),
                             "success": True,
                         }
@@ -2459,28 +2681,64 @@ async def immersive_resume(
                 "knowledge_points": ch_info.get("knowledge_points", []),
                 "pdf_exists": pdf_ready,
                 "pdf_path": pdf_rel,
+                "pdf_doc_id": "",
                 "exercises_exists": exercises_path.exists(),
                 "exercises_path": ex_rel,
+                "exercises_doc_id": "",
                 "num_frames": num_frames,
                 "speaker_notes_count": len(speaker_notes),
                 "audio_files": audio_files_data,
+                "audio_doc_id": audio_doc_id,
+                "notes_doc_id": notes_doc_id,
                 "images": images,
                 "images_count": len(images),
             }
-            chapter_results.append(ch_result)
 
             # 立刻把这一章 PDF 登记到 documents 表（即使后续章节失败也能在文档管理看到）
             try:
-                await asyncio.to_thread(
-                    register_single_chapter_document,
-                    session_id,
-                    topic,
-                    ch_result,
-                    [],
-                    user_id,
+                pdf_doc_id = await asyncio.to_thread(
+                    lambda: register_chapter_pdf(
+                        session_id=session_id,
+                        topic=topic,
+                        chapter_id=ch_id,
+                        chapter_title=ch_title,
+                        pdf_path=pdf_path,
+                        num_pages=num_frames,
+                        user_id=user_id,
+                        node_ids=[],
+                    ),
                 )
+                if pdf_doc_id:
+                    ch_result["pdf_doc_id"] = pdf_doc_id
             except Exception as exc:  # pylint: disable=broad-except
-                logger.warning("单章文档登记失败 ch=%s: %s", ch_id, exc)
+                logger.warning("单章 PDF 登记失败 ch=%s: %s", ch_id, exc)
+
+            # 同步登记习题到 documents 表
+            ex_doc_id = ""
+            if exercises_path.exists() and ex_rel:
+                try:
+                    ex_doc_id = (
+                        await asyncio.to_thread(
+                            lambda p=exercises_path, c=ch_id, t=ch_title: (
+                                register_chapter_exercises(
+                                    session_id=session_id,
+                                    topic=topic,
+                                    chapter_id=c,
+                                    chapter_title=t,
+                                    exercises_path=p,
+                                    user_id=user_id,
+                                    node_ids=[],
+                                )
+                            ),
+                        )
+                        or ""
+                    )
+                    if ex_doc_id:
+                        ch_result["exercises_doc_id"] = ex_doc_id
+                except Exception as exc:  # pylint: disable=broad-except
+                    logger.warning("单章习题登记失败 ch=%s: %s", ch_id, exc)
+
+            chapter_results.append(ch_result)
 
             # （预习手册已在 Researcher 完成后推送，此处不再重复生成）
 
@@ -2489,14 +2747,29 @@ async def immersive_resume(
             chapter_block_ids = [f"chapter_{ch_id}_status"]
             if pdf_ready:
                 pdf_file = {
-                    "file_id": pdf_rel,
-                    "file_type": "pdf",
+                    "file_id": pdf_doc_id or pdf_rel,
+                    "file_type": "chapter_pdf",
                     "title": f"第{ch_id}章 {ch_title}",
                 }
                 all_files_for_session.append(pdf_file)
-                append_session_file(
-                    session_id, pdf_rel, f"第{ch_id}章 {ch_title}", "pdf"
-                )
+                if pdf_doc_id:
+                    append_session_file(
+                        session_id, pdf_doc_id, f"第{ch_id}章 {ch_title}", "chapter_pdf"
+                    )
+                if audio_doc_id:
+                    append_session_file(
+                        session_id,
+                        audio_doc_id,
+                        f"第{ch_id}章 {ch_title} · 音频",
+                        "chapter_audio",
+                    )
+                if notes_doc_id:
+                    append_session_file(
+                        session_id,
+                        notes_doc_id,
+                        f"第{ch_id}章 {ch_title} · 讲解稿",
+                        "chapter_notes",
+                    )
                 pdf_block = {
                     "id": f"pdf_ch{ch_id}",
                     "type": "pdf",
@@ -2504,11 +2777,13 @@ async def immersive_resume(
                     "status": "ready",
                     "chapter_id": ch_id,
                     "data": {
-                        "url": f"/api/immersive/files/{pdf_rel}",
+                        "url": f"/api/documents/{pdf_doc_id}/raw" if pdf_doc_id else "",
                         "pdf_path": pdf_rel,
+                        "doc_id": pdf_doc_id,
                         "num_pages": num_frames,
                         "audio_enabled": enable_audio,
                         "audio_files": audio_files_data,
+                        "audio_doc_id": audio_doc_id,
                     },
                 }
                 upsert_canvas_block(session_id, pdf_block)
@@ -2516,9 +2791,13 @@ async def immersive_resume(
                 chapter_block_ids.append(pdf_block["id"])
 
             if exercises_path.exists() and ex_rel:
-                append_session_file(
-                    session_id, ex_rel, f"第{ch_id}章 {ch_title} 习题", "md"
-                )
+                if ex_doc_id:
+                    append_session_file(
+                        session_id,
+                        ex_doc_id,
+                        f"第{ch_id}章 {ch_title} 习题",
+                        "chapter_exercises",
+                    )
                 quiz_block = {
                     "id": f"quiz_ch{ch_id}_bank",
                     "type": "quiz_batch",
@@ -2528,6 +2807,7 @@ async def immersive_resume(
                     "data": {
                         "source": "exercises_md",
                         "exercises_path": ex_rel,
+                        "doc_id": ex_doc_id,
                         "display_limit": 3,
                         "strategy": "show_2_to_3_questions_first",
                     },
@@ -2546,6 +2826,10 @@ async def immersive_resume(
                 "audio_enabled": enable_audio,
                 "audio_files": audio_files_data,
                 "speaker_notes_count": len(speaker_notes),
+                "pdf_doc_id": pdf_doc_id,
+                "exercises_doc_id": ex_doc_id,
+                "audio_doc_id": audio_doc_id,
+                "notes_doc_id": notes_doc_id,
             }
             for idx2, item in enumerate(chapters_state):
                 if item.get("chapter_id") == ch_id:
@@ -2652,13 +2936,15 @@ async def immersive_resume(
         )
         from services.immersive.node_extractor import extract_and_persist_nodes
 
+        # 知识图谱抽取与音频开关解耦，保证 LLM 实例始终可用
+        extractor_llm = tts_llm or get_llm(user_id)
         new_chapters_info = [chapters[i] for i, _ in pending_chapters]
         created_nodes = await asyncio.to_thread(
             extract_and_persist_nodes,
             session_id,
             topic,
             new_chapters_info,
-            tts_llm,
+            extractor_llm,
             user_id,
         )
         if created_nodes:

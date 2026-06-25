@@ -34,7 +34,7 @@ class GetNodeTool(BaseTool):
         self._user_id = user_id
         self._repo = NodeRepository()
 
-    def run(self, node_id: str) -> str:
+    def run(self, node_id: str = "", **kwargs) -> str:
         node = self._repo.get_by_id(node_id)
         if not node:
             return json.dumps(

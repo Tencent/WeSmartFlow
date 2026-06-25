@@ -64,12 +64,13 @@ class CreateQuizTool(BaseTool):
 
     def run(
         self,
-        node_id: str,
-        quiz_type: str,
-        question: str,
-        correct_answer: str,
-        explanation: str,
+        node_id: str = "",
+        quiz_type: str = "",
+        question: str = "",
+        correct_answer: str = "",
+        explanation: str = "",
         options: list[str] = None,
+        **kwargs,
     ) -> str:
         quiz_id = new_id()
         now = utcnow_str()

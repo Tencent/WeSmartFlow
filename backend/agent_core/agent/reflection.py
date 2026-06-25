@@ -25,7 +25,8 @@ from ..context.base import BaseContextBuilder
 from ..context.simple import SimpleContextBuilder
 from ..llm.base import BaseLLM, LLMResponse
 from ..tool.registry import ToolRegistry
-from .base import AgentFinishReason, AgentResult, BaseAgent
+from .base import AgentResult, BaseAgent
+from .events import AgentFinishReason
 
 logger = logging.getLogger(__name__)
 

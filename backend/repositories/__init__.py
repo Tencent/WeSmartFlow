@@ -5,6 +5,12 @@ from .quiz_repo import QuizRepository, StudyLogRepository
 from .user_repo import UserRepository
 from .daily_brief_repo import DailyBriefRepository
 from .daily_plan_repo import DailyPlanRepository
+from .profile_repo import (
+    ProfileFactRepository,
+    ProfileOverviewRepository,
+    ProfileSkillRepository,
+    ProfileFactHistoryRepository,
+)
 
 __all__ = [
     "NodeRepository",
@@ -15,4 +21,8 @@ __all__ = [
     "UserRepository",
     "DailyBriefRepository",
     "DailyPlanRepository",
+    "ProfileFactRepository",
+    "ProfileOverviewRepository",
+    "ProfileSkillRepository",
+    "ProfileFactHistoryRepository",
 ]

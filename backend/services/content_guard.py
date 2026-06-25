@@ -38,6 +38,8 @@ from pathlib import Path
 from typing import Optional, List, Dict
 from dataclasses import dataclass, field
 
+from utils.log_safe import safe_log
+
 logger = logging.getLogger(__name__)
 
 
@@ -291,7 +293,10 @@ class ContentGuard:
                     "sensitive_words_dir", "sensitive_words"
                 )
         except Exception:
-            pass
+            logger.warning(
+                "加载审核规则时发生异常，使用默认敏感词目录: %s",
+                sensitive_dir_name,
+            )
 
         sensitive_dir = config_dir / sensitive_dir_name
 
@@ -303,6 +308,7 @@ class ContentGuard:
             return
 
         total_words = 0
+        skipped_single_char: List[str] = []  # 被过滤的单字词条（仅记日志用）
         for txt_file in sorted(sensitive_dir.glob("*.txt")):
             category = txt_file.stem  # 文件名去掉 .txt 作为类别名
             words = []
@@ -312,6 +318,12 @@ class ContentGuard:
                         line = line.strip()
                         # 跳过空行和注释
                         if not line or line.startswith("#"):
+                            continue
+                        # 过滤单字屏蔽词：避免类似"法"、"功"这种单个汉字
+                        # 被同步进来后引起的大面积误杀（"方法"、"成功"等正常词都会命中）。
+                        # 单字的精确拦截交由第 2 层正则（含上下文）和第 3 层 LLM 语义层处理。
+                        if self._is_single_char_word(line):
+                            skipped_single_char.append(f"{category}:{line}")
                             continue
                         words.append(line.lower())  # 统一转小写用于匹配
             except Exception as e:
@@ -327,6 +339,38 @@ class ContentGuard:
             len(self._sensitive_words),
             total_words,
         )
+        if skipped_single_char:
+            logger.info(
+                "已自动过滤 %d 个单字屏蔽词（避免误杀）: %s",
+                len(skipped_single_char),
+                ", ".join(skipped_single_char[:50])
+                + ("..." if len(skipped_single_char) > 50 else ""),
+            )
+
+    @staticmethod
+    def _is_single_char_word(word: str) -> bool:
+        """
+        判断一个敏感词是否属于"单字"，需要被过滤掉。
+
+        判定规则：
+            - 1 个中文字符（CJK 统一表意文字范围）→ 单字，过滤
+            - 1 个英文字母/数字 → 单字，过滤
+            - 多字符（包括 1 个汉字 + 标点等）→ 保留
+            - 含全角空格、零宽字符等的"伪多字"由调用方自行处理（暂不在此过滤）
+
+        例：
+            "法"          → True   （中文单字，过滤）
+            "a"           → True   （英文单字，过滤）
+            "法轮功"       → False  （多字，保留）
+            "fuck"        → False  （多字，保留）
+        """
+        if not word:
+            return True
+        # 长度 >= 2 一律保留
+        if len(word) >= 2:
+            return False
+        # 长度 == 1 的情况（不区分中英文，统一过滤）
+        return True
 
     # ------------------------------------------------------------------
     # 第 2 层：规则层（正则表达式匹配，同步，极快）
@@ -761,14 +805,15 @@ class ContentGuard:
         """
         layer_names = {1: "敏感词库层", 2: "规则层", 3: "LLM语义层"}
         layer_name = layer_names.get(result.layer, f"第{result.layer}层")
+        # 用户可控字段统一清洗，避免日志注入（CWE-117）
         logger.warning(
             "内容审核拦截 | layer=%d(%s) | user=%s | category=%s | detail=%s | input_preview=%s",
             result.layer,
             layer_name,
-            user_id,
-            result.category,
-            result.detail,
-            text[:100],  # 只记录前 100 字符
+            safe_log(user_id, max_len=64),
+            safe_log(result.category, max_len=64),
+            safe_log(result.detail, max_len=256),
+            safe_log(text[:100], max_len=100),  # 只记录前 100 字符
         )
 
 

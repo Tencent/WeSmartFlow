@@ -13,7 +13,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from models.session import SessionCreate, ChatMessage, SessionSchema, SessionDetail
 from services import TutorService
-from agent_core.agent.base import (
+from agent_core.agent.events import (
     AgentThinkChunkEvent,
     AgentThinkEvent,
     AgentToolCallChunkEvent,
@@ -29,6 +29,7 @@ from agent_core.agent.base import (
 from dependencies import get_current_user
 from services.quota import QuotaExceededError
 from services.content_guard import get_content_guard
+from utils.validators import SessionIdPath
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +83,7 @@ def create_session(data: SessionCreate, user_id: str = Depends(get_current_user)
 
 
 @router.get("/{session_id}", response_model=SessionDetail)
-def get_session(session_id: str, user_id: str = Depends(get_current_user)):
+def get_session(session_id: SessionIdPath, user_id: str = Depends(get_current_user)):
     detail = TutorService().get_session_detail(user_id, session_id)
     if not detail:
         raise HTTPException(404, "会话不存在")
@@ -92,7 +93,7 @@ def get_session(session_id: str, user_id: str = Depends(get_current_user)):
 @router.post("/{session_id}/chat/stream")
 async def chat_stream(
     request: Request,
-    session_id: str,
+    session_id: SessionIdPath,
     body: ChatMessage,
     user_id: str = Depends(get_current_user),
 ):
@@ -283,7 +284,7 @@ class DurationUpdate(BaseModel):
 
 @router.patch("/{session_id}/duration")
 def update_duration(
-    session_id: str,
+    session_id: SessionIdPath,
     body: DurationUpdate,
     user_id: str = Depends(get_current_user),
 ):

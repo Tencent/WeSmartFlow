@@ -12,6 +12,7 @@ import os
 import random
 import time
 from typing import Any, AsyncGenerator, Dict, List, Optional
+from urllib.parse import urlparse
 
 from openai import AsyncOpenAI, OpenAI
 
@@ -29,6 +30,23 @@ from .base import (
 # ---------------------------------------------------------------------------
 # 内部工具函数
 # ---------------------------------------------------------------------------
+
+
+def _is_official_openai_endpoint(base_url: Optional[str]) -> bool:
+    """判断 base_url 是否指向官方 OpenAI API 端点。
+
+    - base_url 为空（未配置）时，openai SDK 默认走官方端点，视为 True。
+    - 否则解析 URL，仅当 hostname 严格等于 `api.openai.com` 或其子域时才认为是官方。
+    使用 hostname 精确匹配是为了避免 `"openai.com" in url` 这种子串校验被绕过
+    （例如 https://evil.com/openai.com/x、https://api.openai.com.evil.io）。
+    """
+    if not base_url:
+        return True
+    try:
+        host = (urlparse(base_url).hostname or "").lower()
+    except Exception:
+        return False
+    return host == "api.openai.com" or host.endswith(".api.openai.com")
 
 
 def _normalize_params(model_name: str, config: Dict[str, Any]) -> Dict[str, Any]:
@@ -324,8 +342,10 @@ class OpenAILLM(BaseLLM):
         merged_config = {**self.default_config, **(config or {})}
         kw = self._build_kwargs(messages, tools, tool_choice, merged_config)
         kw["stream"] = True
-        # stream_options 仅标准 OpenAI API 支持，兼容端点可能不支持，按需开启
-        if not self.base_url or "openai.com" in (self.base_url or ""):
+        # stream_options 仅标准 OpenAI API 支持，兼容端点可能不支持，按需开启。
+        # 注意：必须解析 URL 后比较 hostname，不能用 `"openai.com" in url` 这种子串匹配，
+        # 否则 https://evil.com/openai.com/x 或 https://api.openai.com.evil.io 都会被误判。
+        if _is_official_openai_endpoint(self.base_url):
             kw["stream_options"] = {"include_usage": True}
 
         accumulated = ""

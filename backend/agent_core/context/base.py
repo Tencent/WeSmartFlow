@@ -42,8 +42,9 @@ class BaseContextBuilder(ABC):
     def build_system_prompt(self, **kwargs: Any) -> str:
         """构建 system prompt 字符串。
 
-        Args:
-            **kwargs: 子类自定义的构建参数。
+        基类签名采用 ``**kwargs``，子类应在自身签名中以带默认值的关键字
+        参数显式声明所需参数（如 ``skill_names: list = None`` 加 ``**kwargs``
+        兜底），调用方统一以关键字方式传入。
 
         Returns:
             完整的 system prompt 文本。

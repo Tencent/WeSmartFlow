@@ -9,6 +9,7 @@ LLM 工厂：根据数据库 settings 表（或环境变量 fallback）创建 LL
 from __future__ import annotations
 
 import os
+from typing import Optional
 
 from agent_core.llm import BaseLLM
 from agent_core.llm.openai_llm import OpenAILLM
@@ -67,6 +68,20 @@ def create_openai_llm(
     )
 
 
+def get_profile_llm(user_id: str) -> BaseLLM:
+    """获取画像专用 LLM，默认不消耗用户额度。
+
+    可通过 PROFILE_LLM_MODEL / PROFILE_LLM_BASE_URL / PROFILE_LLM_API_KEY 单独指定；
+    未配置时复用 LLM_* 配置。适合使用更稳定的 tool_call 模型（如 deepseek-chat）。
+    """
+    api_key = os.getenv("PROFILE_LLM_API_KEY") or os.getenv("LLM_API_KEY", "")
+    base_url = os.getenv("PROFILE_LLM_BASE_URL") or os.getenv("LLM_BASE_URL", "")
+    model = os.getenv("PROFILE_LLM_MODEL") or os.getenv("LLM_MODEL", "")
+    return create_openai_llm(
+        user_id, api_key=api_key, base_url=base_url, model=model, with_quota=False
+    )
+
+
 def get_llm(user_id: str) -> BaseLLM:
     """每次调用都从数据库/环境变量读取指定用户的最新配置，确保设置页修改后立即生效。
 
@@ -111,3 +126,33 @@ def get_llm(user_id: str) -> BaseLLM:
         )
 
     raise RuntimeError("未配置任何 LLM 服务。请在 .env 中设置 LLM_API_KEY。")
+
+
+def get_system_llm(timeout: Optional[int] = None) -> BaseLLM:
+    """系统内部组件专用的 LLM（KG builder/aggregator 等后台任务）。
+
+    与 get_llm 的区别：
+      - 只读环境变量，不查 settings 表（避免后台任务依赖某个真实用户的配置）
+      - 不注入额度 hook（系统组件不属于任何用户，不应消费免费额度，
+        也不会因此触发 api_usage 表的外键约束失败）
+      - 可指定更短的 timeout（默认走 OpenAILLM 的 LLM_TIMEOUT env，通常较长）。
+        后台 builder / aggregator 链路里推荐传 60s，避免单次卡住拖死整批。
+    """
+    api_key = os.getenv("LLM_API_KEY", "")
+    base_url = os.getenv("LLM_BASE_URL", "")
+    model = os.getenv("LLM_MODEL", "")
+    if not api_key:
+        raise RuntimeError(
+            "系统 LLM 未配置。请在 .env 中设置 LLM_API_KEY/LLM_BASE_URL/LLM_MODEL。"
+        )
+    if not base_url or not model:
+        raise RuntimeError(
+            "系统 LLM 配置不完整。请确保同时设置了 LLM_API_KEY, LLM_BASE_URL 和 LLM_MODEL。"
+        )
+    return OpenAILLM(
+        model_name=model,
+        api_key=api_key,
+        base_url=base_url,
+        before_call=None,
+        timeout=timeout,
+    )

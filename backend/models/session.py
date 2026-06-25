@@ -40,13 +40,17 @@ class MessageSchema(BaseSchema):
 
 
 class SessionFile(BaseSchema):
-    """会话中生成的文件记录"""
+    """会话中生成的文件记录。
 
-    file_id: str = Field(description="对应 documents 表的 id")
+    ``file_type`` 与 ``documents.file_type`` 取值保持一致，
+    例如 ``html_card`` / ``viz`` / ``chapter_pdf`` / ``chapter_audio`` / ``quiz`` 等。
+    """
+
+    file_id: str = Field(description="对应 documents 表的 id（uuid）")
     title: str = Field(default="", description="文件标题（展示用）")
-    file_type: Literal[
-        "md", "pdf", "audio", "json", "html", "viz", "quiz", "other", "empty"
-    ] = Field(default="pdf")
+    file_type: str = Field(
+        default="upload", description="文件类型（与 documents.file_type 对齐）"
+    )
     created_at: Optional[datetime] = Field(default=None)
     from_message_id: Optional[str] = Field(
         default=None, description="哪条消息触发生成的"

@@ -1,11 +1,35 @@
 """
 DocumentRepository：文档数据访问层
+
+文档来源（source）只有两类：
+  - "uploaded"  用户上传
+  - "generated" AI 生成（chat 工具 / immersive 编排 等）
+
+外部上传走 create()；AI 产物登记统一走 register_produced()。
+
+钩子机制：
+  ``register_produced`` 成功后会触发 ``on_register_produced(doc)`` 钩子，
+  默认 no-op；backend 启动时会注入 KG 自动登记实现（services.kg_facade）。
+  这样 repository 层不直接依赖 KG / facade，保持纯粹。
 """
 
 from __future__ import annotations
-from typing import Optional
+from pathlib import Path
+from typing import Callable, Optional
+
+from config import DATA_DIR
 from models.document import DocumentSchema, DocumentBrief
-from .base import BaseRepository, _loads, _dumps, utcnow_str
+from .base import BaseRepository, _loads, _dumps, new_id, utcnow_str
+
+
+# ── 可注入钩子：register_produced 成功后回调（默认 no-op） ─────
+# backend 启动时会被替换为 KG 自动登记实现（services.kg_facade）
+def _noop_on_register_produced(_doc: DocumentSchema) -> None:
+    """默认钩子，什么也不做。"""
+    return None
+
+
+on_register_produced: Callable[[DocumentSchema], None] = _noop_on_register_produced
 
 
 def _row_to_schema(row: dict) -> DocumentSchema:
@@ -30,6 +54,7 @@ def _row_to_schema(row: dict) -> DocumentSchema:
 
 
 class DocumentRepository(BaseRepository):
+    # ── 查询 ─────────────────────────────────────────
     def get_all(self, user_id: str) -> list[DocumentBrief]:
         rows = self._fetchall(
             "SELECT * FROM documents WHERE user_id=? ORDER BY created_at DESC",
@@ -55,26 +80,36 @@ class DocumentRepository(BaseRepository):
         row = self._fetchone("SELECT * FROM documents WHERE id=?", (doc_id,))
         return _row_to_schema(row) if row else None
 
+    # ── 统一写入入口 ─────────────────────────────────
     def create(
         self,
+        *,
         doc_id: str,
         user_id: str,
         title: str,
-        source: str,
+        source: str,  # "uploaded" | "generated"
         file_name: str,
         storage_key: str,
         file_type: str,
         file_size: int,
-        generated_from_session_id: str = None,
-        generation_prompt: str = None,
+        status: str = "pending",
+        session_id: Optional[str] = None,
+        generation_prompt: Optional[str] = None,
+        node_ids: Optional[list[str]] = None,
+        total_pages: Optional[int] = None,
     ) -> DocumentSchema:
+        """统一写入入口，覆盖 uploaded / generated 两种来源。"""
         now = utcnow_str()
+        node_ids = node_ids or []
+        processed_at = now if status == "ready" else None
+
         self._execute(
             """
             INSERT INTO documents
               (id, user_id, title, source, file_name, storage_key, file_type, file_size,
-               status, generated_from_session_id, generation_prompt, node_ids, created_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+               status, error_msg, total_pages, generated_from_session_id,
+               generation_prompt, node_ids, created_at, processed_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 doc_id,
@@ -85,15 +120,16 @@ class DocumentRepository(BaseRepository):
                 storage_key,
                 file_type,
                 file_size,
-                "pending",
-                generated_from_session_id,
+                status,
+                None,
+                total_pages,
+                session_id,
                 generation_prompt,
-                "[]",
+                _dumps(node_ids),
                 now,
+                processed_at,
             ),
         )
-        # 不在这里commit，让调用方控制事务
-        # 直接返回构建的文档对象，避免再次查询
         return DocumentSchema(
             id=doc_id,
             user_id=user_id,
@@ -103,77 +139,84 @@ class DocumentRepository(BaseRepository):
             storage_key=storage_key,
             file_type=file_type,
             file_size=file_size,
-            status="pending",
+            status=status,
             error_msg=None,
-            total_pages=None,
-            generated_from_session_id=generated_from_session_id,
+            total_pages=total_pages,
+            generated_from_session_id=session_id,
             generation_prompt=generation_prompt,
-            node_ids=[],
+            node_ids=node_ids,
             created_at=now,
-            processed_at=None,
+            processed_at=processed_at,
         )
 
-    def create_generated(
+    # ── 高阶产物登记 ─────────────────────────────────
+    def register_produced(
         self,
-        doc_id: str,
+        *,
         user_id: str,
         title: str,
-        file_name: str,
-        storage_key: str,
+        file_path: Path,
         file_type: str,
-        file_size: int,
-        generation_prompt: str,
-        session_id: str = None,
-        node_ids: list = None,
+        doc_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        generation_prompt: str = "",
+        node_ids: Optional[list[str]] = None,
+        total_pages: Optional[int] = None,
     ) -> DocumentSchema:
-        """创建AI生成的文档"""
-        now = utcnow_str()
-        node_ids_json = _dumps(node_ids or [])
+        """登记一份"AI 已生成完毕"的产物到 documents 表。
 
-        self._execute(
-            """
-            INSERT INTO documents
-              (id, user_id, title, source, file_name, storage_key, file_type, file_size,
-               status, generated_from_session_id, generation_prompt, node_ids, created_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
-            """,
-            (
-                doc_id,
-                user_id,
-                title,
-                "generated",
-                file_name,
-                storage_key,
-                file_type,
-                file_size,
-                "ready",
-                session_id,
-                generation_prompt,
-                node_ids_json,
-                now,
-            ),
-        )
-        # 不在这里commit，让调用方控制事务
+        - file_path 必须是绝对路径，且必须落在 DATA_DIR 之下，
+          会自动派生 storage_key（相对 DATA_DIR）和 file_name。
+        - file_size 自动从磁盘获取，不存在时记为 0。
+        - status 直接置为 ready。
 
-        return DocumentSchema(
-            id=doc_id,
+        Args:
+            doc_id: 显式指定主键（如卡片/Viz 已有自己的 id）；不传则随机分配。
+        """
+        if not isinstance(file_path, Path):
+            file_path = Path(file_path)
+
+        # storage_key 必须是相对 DATA_DIR 的路径
+        try:
+            storage_key = str(file_path.resolve().relative_to(DATA_DIR.resolve()))
+        except ValueError as exc:
+            raise ValueError(
+                f"register_produced: file_path 必须位于 DATA_DIR={DATA_DIR} 之下，"
+                f"实际为 {file_path}"
+            ) from exc
+
+        file_size = file_path.stat().st_size if file_path.exists() else 0
+
+        doc = self.create(
+            doc_id=doc_id or new_id(),
             user_id=user_id,
             title=title,
             source="generated",
-            file_name=file_name,
+            file_name=file_path.name,
             storage_key=storage_key,
             file_type=file_type,
             file_size=file_size,
             status="ready",
-            error_msg=None,
-            total_pages=None,
-            generated_from_session_id=session_id,
+            session_id=session_id,
             generation_prompt=generation_prompt,
             node_ids=node_ids or [],
-            created_at=now,
-            processed_at=now,
+            total_pages=total_pages,
         )
 
+        # 触发钩子：用于联动 KG exhibit 登记等扩展逻辑
+        # 钩子异常不影响主流程（document 已成功落库）
+        try:
+            on_register_produced(doc)
+        except Exception:  # pylint: disable=broad-except
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "register_produced 钩子异常 doc_id=%s", doc.id, exc_info=True
+            )
+
+        return doc
+
+    # ── 状态/字段更新 ────────────────────────────────
     def set_status(self, doc_id: str, status: str, error_msg: str = None) -> None:
         now = utcnow_str()
         if status == "ready":
@@ -186,38 +229,19 @@ class DocumentRepository(BaseRepository):
                 "UPDATE documents SET status=?, error_msg=? WHERE id=?",
                 (status, error_msg, doc_id),
             )
-        # 不在这里commit，让调用方控制事务
 
     def set_node_ids(self, doc_id: str, node_ids: list[str]) -> None:
         self._execute(
-            "UPDATE documents SET node_ids=? WHERE id=?", (_dumps(node_ids), doc_id)
+            "UPDATE documents SET node_ids=? WHERE id=?",
+            (_dumps(node_ids), doc_id),
         )
-        # 不在这里commit，让调用方控制事务
 
     def set_pages(self, doc_id: str, total_pages: int) -> None:
         self._execute(
-            "UPDATE documents SET total_pages=? WHERE id=?", (total_pages, doc_id)
-        )
-        # 不在这里commit，让调用方控制事务
-
-    def exists_by_session_and_key(self, session_id: str, storage_key: str) -> bool:
-        """判断同一会话下指定 storage_key 的文档是否已登记，用于幂等保护。"""
-        row = self._fetchone(
-            "SELECT id FROM documents WHERE generated_from_session_id=? AND storage_key=? LIMIT 1",
-            (session_id, storage_key),
-        )
-        return row is not None
-
-    def update_node_ids_by_session_and_key(
-        self, session_id: str, storage_key: str, node_ids: list[str]
-    ) -> None:
-        """按 (session_id, storage_key) 回填节点关联，用于章节生成完成后补齐节点信息。"""
-        self._execute(
-            "UPDATE documents SET node_ids=? WHERE generated_from_session_id=? AND storage_key=?",
-            (_dumps(node_ids or []), session_id, storage_key),
+            "UPDATE documents SET total_pages=? WHERE id=?",
+            (total_pages, doc_id),
         )
 
     def delete(self, doc_id: str) -> bool:
         cursor = self._execute("DELETE FROM documents WHERE id=?", (doc_id,))
-        # 不在这里commit，让调用方控制事务
         return cursor.rowcount > 0

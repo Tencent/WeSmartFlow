@@ -17,6 +17,7 @@ import logging
 
 from database import get_setting, get_db
 from config import FREE_LLM_TOTAL, FREE_SEARCH_TOTAL, FREE_IMAGE_TOTAL
+from utils.log_safe import safe_log
 
 logger = logging.getLogger(__name__)
 
@@ -136,5 +137,9 @@ def check_and_consume(user_id: str, category: str) -> None:
         ).fetchone()
         current_count = row["count"] if row else 0
         logger.debug(
-            "用户 %s 消费 %s 额度: %d/%d", user_id, category, current_count, limit
+            "用户 %s 消费 %s 额度: %d/%d",
+            safe_log(user_id),
+            category,
+            current_count,
+            limit,
         )

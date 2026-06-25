@@ -76,7 +76,7 @@ class ExecTool(BaseTool):
 
     def run(
         self,
-        command: str,
+        command: str = "",
         working_dir: str | None = None,
         timeout: int | None = None,
         **kwargs: Any,
@@ -94,7 +94,7 @@ class ExecTool(BaseTool):
 
     async def async_run(
         self,
-        command: str,
+        command: str = "",
         working_dir: str | None = None,
         timeout: int | None = None,
         **kwargs: Any,
@@ -128,8 +128,8 @@ class ExecTool(BaseTool):
                 process.kill()
                 try:
                     await asyncio.wait_for(process.wait(), timeout=5.0)
-                except asyncio.TimeoutError:
-                    pass
+                except asyncio.TimeoutError as wait_err:
+                    logger.warning("Process did not terminate after kill: %s", wait_err)
                 finally:
                     if sys.platform != "win32":
                         try:

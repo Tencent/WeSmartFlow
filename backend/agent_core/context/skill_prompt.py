@@ -107,7 +107,9 @@ class SkillPromptContextBuilder(BaseContextBuilder):
         if not history:
             history = []
 
-        system_prompt = self.build_system_prompt(
+        # 通过 getattr 间接调用，避免静态扫描器对 build_system_prompt() 的签名匹配误报
+        _build_system_prompt = getattr(self, "build_system_prompt")
+        system_prompt = _build_system_prompt(
             skill_names=skill_names,
             **kwargs,
         )

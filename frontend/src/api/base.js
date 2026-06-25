@@ -109,6 +109,28 @@ async function fetchAsBlobUrl(path) {
   return URL.createObjectURL(blob);
 }
 
+/**
+ * 拼接主资源 URL：/api/documents/{docId}/raw。
+ * 可传 ?token=xxx，用于 iframe / web-view 等无法注入 header 的场景。
+ */
+function docRawUrl(docId, { withToken = false } = {}) {
+  const url = `${BASE_URL}/api/documents/${docId}/raw`;
+  if (!withToken) return url;
+  const token = localStorage.getItem("wesmartflow-token") || "";
+  return token ? `${url}?token=${encodeURIComponent(token)}` : url;
+}
+
+/**
+ * 拼接伴生资源 URL：/api/documents/{docId}/asset/{subPath}。
+ */
+function docAssetUrl(docId, subPath, { withToken = false } = {}) {
+  const cleaned = String(subPath || "").replace(/^\/+/, "");
+  const url = `${BASE_URL}/api/documents/${docId}/asset/${cleaned}`;
+  if (!withToken) return url;
+  const token = localStorage.getItem("wesmartflow-token") || "";
+  return token ? `${url}?token=${encodeURIComponent(token)}` : url;
+}
+
 export const api = {
   get: (path, opts) => request("GET", path, null, opts),
   post: (path, body, opts) => request("POST", path, body, opts),
@@ -120,4 +142,11 @@ export const api = {
   postRaw: (path, opts) => requestRaw("POST", path, opts),
 };
 
-export { BASE_URL, ApiError, authHeaders, fetchAsBlobUrl };
+export {
+  BASE_URL,
+  ApiError,
+  authHeaders,
+  fetchAsBlobUrl,
+  docRawUrl,
+  docAssetUrl,
+};

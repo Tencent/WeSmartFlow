@@ -98,8 +98,8 @@ class BaseCreateNodeTool(BaseTool):
 
     def run(
         self,
-        title: str,
-        description: str,
+        title: str = "",
+        description: str = "",
         tags: list[str] = None,
         key_points: list[str] = None,
         examples: list[str] = None,
@@ -108,6 +108,7 @@ class BaseCreateNodeTool(BaseTool):
         parent_node_ids: list[str] = None,
         related_node_ids: list[str] = None,
         contrast_node_ids: list[str] = None,
+        **kwargs,
     ) -> str:
         # 检查同名节点是否已存在，避免重复创建
         existing_id = self._repo.find_by_title(self._user_id, title)

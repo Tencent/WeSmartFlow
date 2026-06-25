@@ -1,8 +1,7 @@
 """
 个性化推荐云朵生成器
 
-根据用户画像（profile.md）和学习历史（mastery.json + courses 列表），
-调用 LLM 生成个性化的推荐主题标签，用于首页飘浮云朵展示。
+根据统一用户画像总览和学习历史，调用 LLM 生成个性化的推荐主题标签，用于首页飘浮云朵展示。
 
 推荐策略：
 1. 薄弱知识点 → 建议巩固
@@ -15,11 +14,10 @@ from __future__ import annotations
 
 import json
 import logging
-from pathlib import Path
 from typing import Any, Dict, List
 
-from config import DOCUMENTS_DIR
 from services.llm_factory import get_llm
+from utils.log_safe import safe_log
 
 logger = logging.getLogger(__name__)
 
@@ -44,21 +42,18 @@ async def generate_suggestions(user_id: str) -> Dict[str, Any]:
     if cached and (time.time() - cached["timestamp"]) < _CACHE_TTL_SECONDS:
         return cached["data"]
 
-    # 读取用户画像（按 user_id 隔离）
+    # 读取统一用户画像与学习历史
     profile_content = _read_profile(user_id)
-    # 读取 mastery.json（按 user_id 隔离）
-    mastery_data = _read_mastery(user_id)
-    # 读取学习历史（已完成的课程主题）
     learned_topics = _get_learned_topics(user_id)
 
     # 如果没有任何画像数据，返回默认
-    if not profile_content and not mastery_data.get("topics") and not learned_topics:
+    if not profile_content and not learned_topics:
         return {"suggestions": [], "source": "default"}
 
     # 调用 LLM 生成推荐
     try:
         suggestions = await _call_llm_for_suggestions(
-            user_id, profile_content, mastery_data, learned_topics
+            user_id, profile_content, learned_topics
         )
         if suggestions:
             result = {"suggestions": suggestions, "source": "personalized"}
@@ -73,41 +68,14 @@ async def generate_suggestions(user_id: str) -> Dict[str, Any]:
 
 
 def _read_profile(user_id: str = "") -> str:
-    """读取指定用户的 profile.md 内容。"""
-    from agent_core.layout import UserDataLayout
+    """读取统一画像总览文本。"""
+    try:
+        from services.profile_service import ProfileMemoryService
 
-    layout = UserDataLayout(root=DOCUMENTS_DIR, user_id=user_id)
-    if layout.profile_file.exists():
-        content = layout.profile_file.read_text(encoding="utf-8").strip()
-        return content
-    # fallback: 尝试读取旧的全局画像（迁移兼容）
-    if user_id:
-        legacy_file = Path(DOCUMENTS_DIR) / "profile" / "profile.md"
-        if legacy_file.exists():
-            return legacy_file.read_text(encoding="utf-8").strip()
-    return ""
-
-
-def _read_mastery(user_id: str = "") -> Dict[str, Any]:
-    """读取指定用户的 mastery.json。"""
-    from agent_core.layout import UserDataLayout
-
-    layout = UserDataLayout(root=DOCUMENTS_DIR, user_id=user_id)
-    mastery_file = layout.mastery_file
-    if mastery_file.exists():
-        try:
-            return json.loads(mastery_file.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            pass
-    # fallback: 尝试读取旧的全局文件（迁移兼容）
-    if user_id:
-        legacy_file = Path(DOCUMENTS_DIR) / "profile" / "mastery.json"
-        if legacy_file.exists():
-            try:
-                return json.loads(legacy_file.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                pass
-    return {"topics": {}}
+        return ProfileMemoryService().build_profile_text(user_id).strip()
+    except Exception:
+        logger.exception("读取统一画像失败 (user=%s)", safe_log(user_id))
+        return ""
 
 
 def _get_learned_topics(user_id: str) -> List[str]:
@@ -134,7 +102,6 @@ def _get_learned_topics(user_id: str) -> List[str]:
 async def _call_llm_for_suggestions(
     user_id: str,
     profile_content: str,
-    mastery_data: Dict[str, Any],
     learned_topics: List[str],
 ) -> List[Dict[str, str]]:
     """调用 LLM 生成推荐主题列表。"""
@@ -147,28 +114,6 @@ async def _call_llm_for_suggestions(
 
     if learned_topics:
         context_parts.append("## 已学过的课程\n" + "、".join(learned_topics))
-
-    topics_data = mastery_data.get("topics", {})
-    if topics_data:
-        mastery_lines = []
-        for topic_name, topic_info in topics_data.items():
-            chapters = topic_info.get("chapters", {})
-            if chapters:
-                accuracies = [ch.get("accuracy", 0) for ch in chapters.values()]
-                avg_acc = sum(accuracies) / len(accuracies) if accuracies else 0
-                status = (
-                    "熟练"
-                    if avg_acc >= 0.8
-                    else "基本掌握"
-                    if avg_acc >= 0.6
-                    else "需要加强"
-                )
-                mastery_lines.append(
-                    f"- {topic_name}：{status}（正确率 {avg_acc:.0%}）"
-                )
-            else:
-                mastery_lines.append(f"- {topic_name}：已学习，待评价")
-        context_parts.append("## 知识点掌握情况\n" + "\n".join(mastery_lines))
 
     context = "\n\n".join(context_parts)
 

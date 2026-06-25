@@ -130,8 +130,8 @@ class ExtractService:
                     if data.get("created"):
                         new_node_ids.append(data["node_id"])
                         logger.info("文档 %s 新增节点: %s", doc_id, data["node_id"])
-                except (json.JSONDecodeError, AttributeError):
-                    pass
+                except (json.JSONDecodeError, AttributeError) as e:
+                    logger.warning("解析节点创建结果失败: %s", e)
 
         # 组装强大的工具集，使用hook机制
         tools = [

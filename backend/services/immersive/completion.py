@@ -10,6 +10,7 @@ import logging
 from typing import Dict, Any
 
 from repositories import SessionRepository, StudyLogRepository
+from utils.log_safe import safe_log
 
 logger = logging.getLogger(__name__)
 
@@ -101,14 +102,14 @@ def complete_immersive_session(
             workspace={"user_feedback": feedback, "completed_by_user": True},
         )
 
-    # ── 画像汇总：课程完成时更新 profile.md ──────────────────
+    # ── 画像汇总：课程完成时更新统一画像事实 ──────────────────
     try:
         _summarize_to_profile(session, user_id, feedback)
     except Exception as e:
         logger.warning("课程完成画像汇总失败: %s", e)
     logger.info(
         "用户确认完成学习：session=%s, duration=%d min, nodes=%d",
-        session_id,
+        safe_log(session_id),
         duration,
         len(node_ids),
     )
@@ -123,37 +124,26 @@ def complete_immersive_session(
 
 
 def _summarize_to_profile(session, user_id: str, feedback: str) -> None:
-    """课程完成时，将学习主题写入 profile.md 的「学习过的主题」中。
-
-    如果 mastery.json 中已有该主题的答题数据（由 quiz-result 接口写入），
-    则此处不重复写入掌握度；否则标记为“待评价”。
-    """
-    from datetime import datetime
-    from services.immersive.profile_updater import _load_mastery, _save_mastery
+    """课程完成时，将学习主题写入统一画像事实。"""
+    from repositories import ProfileFactRepository, ProfileOverviewRepository
 
     topic = (session.topic or session.title or "").replace("[AI课程]", "").strip()
     if not topic:
         return
 
-    # 确保 mastery.json 中有该主题的记录（即使没有答题数据）
-    mastery = _load_mastery(user_id)
-    if topic not in mastery["topics"]:
-        mastery["topics"][topic] = {
-            "first_study": datetime.now().isoformat(),
-            "chapters": {},
-            "status": "completed",
-        }
-    else:
-        mastery["topics"][topic]["status"] = "completed"
-
+    value = f"完成沉浸式课程「{topic}」"
     if feedback:
-        mastery["topics"][topic]["user_feedback"] = feedback
-
-    _save_mastery(mastery, user_id)
-
-    # 触发 profile.md 的掌握度段落更新
-    from services.immersive.profile_updater import _update_profile_mastery_section
-
-    _update_profile_mastery_section(mastery, user_id)
+        value += f"，反馈：{feedback.strip()}"
+    ProfileFactRepository().upsert_candidate(
+        user_id,
+        category="goal",
+        key=f"completed_topic:{topic}",
+        value=value,
+        evidence_type="behavior",
+        confidence=0.75,
+        importance=0.7,
+        source_ref="immersive_completion",
+    )
+    ProfileOverviewRepository().refresh_source_snapshot(user_id)
 
     logger.info("课程完成画像汇总: topic=%s", topic)

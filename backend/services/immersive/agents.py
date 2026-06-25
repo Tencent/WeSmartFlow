@@ -13,49 +13,22 @@ from agent_core.layout import UserDataLayout
 from agent_core.tool import (
     ArxivSearch,
     LatexPdfCompileTool,
-    OpenAIImageGenTool,
     ReadFileTool,
     TavilySearch,
     ToolRegistry,
     WebFetch,
     WriteFileTool,
 )
+from agents.tools.image_gen_factory import build_image_gen_tool
 from config import TEX_TEMPLATE_DIR
 
 logger = logging.getLogger(__name__)
-
-
-def build_image_tool(user_id, before_call_hook=None):
-    """构建图像生成工具实例（OpenAI 兼容接口）。"""
-    try:
-        from database import get_setting
-
-        api_key = get_setting(user_id, "img_api_key") or os.getenv("IMG_API_KEY", "any")
-        base_url = get_setting(user_id, "img_base_url") or os.getenv(
-            "IMG_BASE_URL", "http://localhost:8080/v1"
-        )
-        model = get_setting(user_id, "img_model") or os.getenv("IMG_MODEL") or None
-    except Exception as e:  # pylint: disable=broad-except
-        logger.warning(
-            "图片生成配置读取失败（将使用默认值，图片功能可能不可用）: %s", e
-        )
-        api_key = os.getenv("IMG_API_KEY", "any")
-        base_url = os.getenv("IMG_BASE_URL", "http://localhost:8080/v1")
-        model = os.getenv("IMG_MODEL") or None
-    logger.info("沉浸式学习：使用 OpenAI 兼容图片生成接口")
-    return OpenAIImageGenTool(
-        api_key=api_key,
-        base_url=base_url,
-        model=model,
-        before_call_hook=before_call_hook,
-    )
 
 
 def build_sub_agents(layout: UserDataLayout, user_id) -> Dict[str, ReActAgent]:
     """构建 4 个独立子 Agent。"""
     from database import get_setting
     from services.llm_factory import get_llm
-    from agent_core.memory.profile import FileUserProfileStore
 
     tavily_key = get_setting(user_id, "tavily_api_key") or os.getenv(
         "TAVILY_API_KEY", ""
@@ -65,17 +38,11 @@ def build_sub_agents(layout: UserDataLayout, user_id) -> Dict[str, ReActAgent]:
     _search_hook = None
     _image_hook = None
 
-    # 构建按 user_id 隔离的 profile_store
-    profile_store = FileUserProfileStore(
-        profile_file=layout.profile_file,
-        history_file=layout.profile_history_file,
-    )
-
     planner = ReActAgent(
         llm=get_llm(user_id),
         context_builder=ContextBuilderWithProfileAndSkill(
             workspace_dir=layout.root,
-            profile_store=profile_store,
+            user_id=user_id,
             base_prompt=(
                 "你是一个专业的课程规划师。根据用户的学习主题，"
                 "规划一份循序渐进的课程大纲。\n\n"
@@ -141,7 +108,7 @@ def build_sub_agents(layout: UserDataLayout, user_id) -> Dict[str, ReActAgent]:
         llm=get_llm(user_id),
         context_builder=ContextBuilderWithProfileAndSkill(
             workspace_dir=layout.root,
-            profile_store=profile_store,
+            user_id=user_id,
             base_prompt=(
                 "你是 LaTeX Beamer 讲义设计师。根据章节信息，从文件系统读取参考资料，生成教学插图，撰写 TeX 源码，编译为 PDF。\n"
                 "严格遵循 tex_beamer_writing 技能中的所有格式规范和文件系统协议。"
@@ -151,7 +118,7 @@ def build_sub_agents(layout: UserDataLayout, user_id) -> Dict[str, ReActAgent]:
             [
                 ReadFileTool(),
                 WriteFileTool(),
-                build_image_tool(user_id, before_call_hook=_image_hook),
+                build_image_gen_tool(user_id, before_call_hook=_image_hook),
                 LatexPdfCompileTool(TEX_TEMPLATE_DIR),
             ]
         ),
@@ -162,7 +129,7 @@ def build_sub_agents(layout: UserDataLayout, user_id) -> Dict[str, ReActAgent]:
         llm=get_llm(user_id),
         context_builder=ContextBuilderWithProfileAndSkill(
             workspace_dir=layout.root,
-            profile_store=profile_store,
+            user_id=user_id,
             base_prompt=(
                 "你是教育习题设计师。读取 TeX 讲义，生成**恰好 9 道单选题**写入 .md 文件。\n"
                 "题目必须按难度分为 3 组：3 道简单 + 3 道中等 + 3 道困难，且按此顺序排列。\n"

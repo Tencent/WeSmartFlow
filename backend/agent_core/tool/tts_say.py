@@ -237,11 +237,11 @@ class TTSSayTool(BaseTool):
 
     def run(
         self,
-        items: List[Dict[str, str]],
-        output_dir: str,
+        items: List[Dict[str, str]] = None,
+        output_dir: str = "",
         voice: str = "Tingting",
         rate: int = 210,
-        **_: Any,
+        **kwargs: Any,
     ) -> Dict[str, Any]:
         return say_batch_synthesize(
             items=items,

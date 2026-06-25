@@ -174,6 +174,89 @@ CREATE TABLE IF NOT EXISTS api_usage (
     PRIMARY KEY (user_id, category),
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
+
+-- ====================================================================
+-- L2 用户画像（结构化记忆）：facts / fact_history / overview / skills
+-- ====================================================================
+
+-- 结构化事实源（可审计，支持时间衰减）
+CREATE TABLE IF NOT EXISTS user_profile_facts (
+    id                 TEXT PRIMARY KEY,
+    user_id            TEXT NOT NULL,
+    category           TEXT NOT NULL,          -- basic/goal/interest/ability/preference/mistake_pattern/habit/interaction/constraints
+    key                TEXT NOT NULL,
+    value              TEXT NOT NULL,
+    value_type         TEXT NOT NULL DEFAULT 'text',
+    evidence_type      TEXT NOT NULL,          -- explicit/quiz/behavior/inference（决定优先级与半衰期）
+    confidence         REAL NOT NULL DEFAULT 0.5,
+    importance         REAL NOT NULL DEFAULT 0.5,
+    observation_count  INTEGER NOT NULL DEFAULT 1,
+    source_ref         TEXT NOT NULL DEFAULT '',
+    evidence           TEXT NOT NULL DEFAULT '[]',
+    status             TEXT NOT NULL DEFAULT 'active', -- active/archived/superseded
+    last_reinforced_at TEXT NOT NULL,          -- 衰减基准：仅新证据强化时刷新
+    valid_from         TEXT,
+    valid_until        TEXT,
+    created_at         TEXT NOT NULL,
+    updated_at         TEXT NOT NULL,
+    UNIQUE (user_id, category, key),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_profile_facts_user ON user_profile_facts(user_id, status);
+
+-- 变更流水（append-only 审计，永不物理删除）
+CREATE TABLE IF NOT EXISTS user_profile_fact_history (
+    id             TEXT PRIMARY KEY,
+    user_id        TEXT NOT NULL,
+    fact_id        TEXT NOT NULL,
+    category       TEXT NOT NULL,
+    key            TEXT NOT NULL,
+    change_type    TEXT NOT NULL,              -- created/reinforced/confidence_updated/superseded/archived
+    old_value      TEXT,
+    new_value      TEXT,
+    old_confidence REAL,
+    new_confidence REAL,
+    evidence_type  TEXT NOT NULL DEFAULT '',
+    source_ref     TEXT NOT NULL DEFAULT '',
+    reason         TEXT NOT NULL DEFAULT '',
+    created_at     TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_fact_history_user ON user_profile_fact_history(user_id, fact_id);
+
+-- 由 facts 编译的画像技能（按任务激活）
+CREATE TABLE IF NOT EXISTS user_profile_skills (
+    id                 TEXT PRIMARY KEY,
+    user_id            TEXT NOT NULL,
+    skill_name         TEXT NOT NULL,          -- explanation_style/learning_path/quiz_generation/review_schedule/interaction_style
+    skill_type         TEXT NOT NULL DEFAULT '',
+    content            TEXT NOT NULL,
+    trigger_conditions TEXT NOT NULL DEFAULT '[]', -- JSON: 可激活 task_type 列表
+    source_fact_ids    TEXT NOT NULL DEFAULT '[]',
+    priority           REAL NOT NULL DEFAULT 0.5,
+    status             TEXT NOT NULL DEFAULT 'active',
+    created_at         TEXT NOT NULL,
+    updated_at         TEXT NOT NULL,
+    UNIQUE (user_id, skill_name),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+-- 统一画像总览（对外读取入口：整体判断 + 兴趣/水平/知识面/行为统计）
+CREATE TABLE IF NOT EXISTS user_profile_overview (
+    user_id             TEXT PRIMARY KEY,
+    overall_judgement   TEXT NOT NULL DEFAULT '',
+    interests           TEXT NOT NULL DEFAULT '[]',
+    learning_level      TEXT NOT NULL DEFAULT '',
+    knowledge_scope     TEXT NOT NULL DEFAULT '',
+    dialogue_preference TEXT NOT NULL DEFAULT '',
+    learning_behavior   TEXT NOT NULL DEFAULT '',
+    weakness_summary    TEXT NOT NULL DEFAULT '',
+    strategy_summary    TEXT NOT NULL DEFAULT '',
+    source_snapshot     TEXT NOT NULL DEFAULT '{}',
+    facts_snapshot      TEXT NOT NULL DEFAULT '[]',
+    version             INTEGER NOT NULL DEFAULT 1,
+    updated_at          TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
 """
 
 # --------------------------------------------------------------------------

@@ -15,6 +15,7 @@ import logging
 from datetime import datetime, timezone
 
 from repositories import UserRepository, DailyBriefRepository
+from utils.log_safe import safe_log
 from services.llm_factory import get_llm
 from services.quota import check_and_consume
 from agent_core.agent.react import ReActAgent
@@ -98,7 +99,8 @@ class DailyBriefService:
         interests = user.preferences.interests if user else []
 
         if not interests:
-            logger.info("用户 %s 未设置兴趣关键词，跳过生成", user_id)
+            # 清洗用户输入，避免日志注入（CWE-117）
+            logger.info("用户 %s 未设置兴趣关键词，跳过生成", safe_log(user_id))
             return {"groups": [], "date": today, "has_data": False}
 
         # 3. ReAct Agent 搜索 + 整理

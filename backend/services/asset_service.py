@@ -275,8 +275,11 @@ def archive_immersive_chapter(
             idx = 0
             try:
                 idx = int(audio_file.stem.split("_")[-1])
-            except (ValueError, IndexError):
-                pass
+            except (ValueError, IndexError) as e:
+                logger.warning(
+                    f"pack_chapter_bundle: 无法解析音频文件帧序号 {audio_file}, error: {e}"
+                )
+
             if archive_audio(
                 audio_file,
                 source_type="immersive",

@@ -14,7 +14,6 @@ from models.user import DashboardStats, StudyLogSchema
 from repositories import NodeRepository, SessionRepository, UserRepository
 from repositories.quiz_repo import StudyLogRepository
 from services.daily_plan_service import DailyPlanService
-from config import DOCUMENTS_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -53,63 +52,134 @@ class UserService:
             preferences=preferences,
             about=about,
         )
-        # 同步 about 到 profile.md，让 Agent 能读取用户画像
-        if about is not None:
+        # 用户自填信息直接同步到统一画像 facts，供后续 overview 编译/注入使用。
+        if about is not None or preferences is not None:
             try:
-                self._sync_about_to_profile(user_id, about)
+                self._sync_user_info_to_profile(
+                    user_id, about=about, preferences=preferences
+                )
             except Exception as e:
-                logger.warning("同步 about 到 profile.md 失败: %s", e)
+                logger.warning("同步用户信息到统一画像失败: %s", e)
         return result
 
-    def _sync_about_to_profile(self, user_id: str, about) -> None:
-        """将用户自填的 about 信息同步写入 profile.md 的「自我描述」部分。
+    def _sync_user_info_to_profile(
+        self, user_id: str, *, about=None, preferences=None
+    ) -> None:
+        """将用户自填信息同步为统一画像 facts，支持新增、修改和清空。"""
+        from repositories import ProfileFactRepository, ProfileOverviewRepository
 
-        保留 profile.md 中 AI 观察到的其他部分（如学习特征、知识点掌握度），
-        只更新「自我描述」段落。
-        """
-        from agent_core.layout import UserDataLayout
+        fact_repo = ProfileFactRepository()
 
-        layout = UserDataLayout(root=DOCUMENTS_DIR, user_id=user_id)
-        layout.ensure_dirs()
-        profile_file = layout.profile_file
-
-        # 构建「自我描述」段落
-        sections = []
-        if hasattr(about, "background") and about.background:
-            sections.append(f"- 学习背景：{about.background}")
-        if hasattr(about, "goals") and about.goals:
-            sections.append(f"- 学习目标：{about.goals}")
-        if hasattr(about, "style") and about.style:
-            sections.append(f"- 学习偏好：{about.style}")
-        if hasattr(about, "other") and about.other:
-            sections.append(f"- 其他：{about.other}")
-
-        if not sections:
-            return  # 没有有效内容，不写入
-
-        new_self_desc = "## 自我描述\n\n" + "\n".join(sections)
-
-        # 读取现有 profile.md，保留非「自我描述」部分
-        existing_content = ""
-        if profile_file.exists():
-            existing_content = profile_file.read_text(encoding="utf-8")
-
-        if existing_content:
-            # 替换已有的「自我描述」段落
-            import re
-
-            pattern = r"## 自我描述\n[\s\S]*?(?=\n## |\Z)"
-            if re.search(pattern, existing_content):
-                updated = re.sub(pattern, new_self_desc, existing_content, count=1)
+        def sync_text_fact(
+            *,
+            category: str,
+            key: str,
+            value: str,
+            confidence: float,
+            importance: float,
+        ) -> None:
+            value = (value or "").strip()
+            if value:
+                fact_repo.upsert_candidate(
+                    user_id,
+                    category=category,
+                    key=key,
+                    value=value,
+                    evidence_type="explicit",
+                    confidence=confidence,
+                    importance=importance,
+                    source_ref="user_about",
+                )
             else:
-                # 没有「自我描述」段落，插入到开头
-                updated = new_self_desc + "\n\n" + existing_content
-        else:
-            # 全新文件
-            updated = "# 用户画像\n\n" + new_self_desc + "\n"
+                fact_repo.archive_fact(
+                    user_id,
+                    category,
+                    key,
+                    source_ref="user_about",
+                    reason="user_about_cleared",
+                )
 
-        profile_file.write_text(updated, encoding="utf-8")
-        logger.info("已同步用户 about 到 profile.md")
+        if about is not None:
+            sync_text_fact(
+                category="basic",
+                key="self_reported_background",
+                value=getattr(about, "background", ""),
+                confidence=1.0,
+                importance=0.8,
+            )
+            sync_text_fact(
+                category="goal",
+                key="self_reported_goals",
+                value=getattr(about, "goals", ""),
+                confidence=1.0,
+                importance=0.9,
+            )
+            sync_text_fact(
+                category="preference",
+                key="self_reported_learning_style",
+                value=getattr(about, "style", ""),
+                confidence=1.0,
+                importance=0.85,
+            )
+            sync_text_fact(
+                category="interaction",
+                key="self_reported_other",
+                value=getattr(about, "other", ""),
+                confidence=0.9,
+                importance=0.6,
+            )
+
+        explicit_interests: list[str] | None = None
+        if preferences is not None:
+            explicit_interests = []
+            for interest in getattr(preferences, "interests", []) or []:
+                interest = str(interest).strip()
+                if interest and interest not in explicit_interests:
+                    explicit_interests.append(interest)
+
+            desired_keys = {f"self_reported_interest:{x}" for x in explicit_interests}
+            existing = fact_repo.list_active_by_source(
+                user_id, "user_preferences", category="interest"
+            )
+            for row in existing:
+                if row.get("key") not in desired_keys:
+                    fact_repo.archive_fact(
+                        user_id,
+                        "interest",
+                        row["key"],
+                        source_ref="user_preferences",
+                        reason="user_interest_removed",
+                    )
+
+            for interest in explicit_interests:
+                fact_repo.upsert_candidate(
+                    user_id,
+                    category="interest",
+                    key=f"self_reported_interest:{interest}",
+                    value=interest,
+                    evidence_type="explicit",
+                    confidence=1.0,
+                    importance=0.75,
+                    source_ref="user_preferences",
+                )
+
+        overview_repo = ProfileOverviewRepository()
+        overview = overview_repo.refresh_source_snapshot(user_id)
+        if explicit_interests is not None:
+            overview_repo.upsert(
+                user_id,
+                overall_judgement=(overview or {}).get("overall_judgement", ""),
+                interests=explicit_interests,
+                learning_level=(overview or {}).get("learning_level", ""),
+                knowledge_scope=(overview or {}).get("knowledge_scope", ""),
+                dialogue_preference=(overview or {}).get("dialogue_preference", ""),
+                learning_behavior=(overview or {}).get("learning_behavior", ""),
+                weakness_summary=(overview or {}).get("weakness_summary", ""),
+                strategy_summary=(overview or {}).get("strategy_summary", ""),
+                source_snapshot=(overview or {}).get("source_snapshot", {}),
+                facts_snapshot=overview_repo.build_facts_snapshot(user_id),
+            )
+        logger.info("已同步用户自填信息到统一画像")
 
     # ------------------------------------------------------------------
     # Dashboard 聚合

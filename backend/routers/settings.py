@@ -16,6 +16,10 @@ from pydantic import BaseModel
 from database import get_all_settings, set_settings_batch
 from dependencies import get_current_user
 from services.quota import check_and_consume, get_usage
+from utils.log_safe import safe_log
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -107,84 +111,60 @@ def test_llm(user_id: str = Depends(get_current_user)):
             return {"ok": False, "error": error_msg}
         return {"ok": True, "reply": resp.content.strip()}
     except Exception as e:  # pylint: disable=broad-except
-        return {"ok": False, "error": str(e)}
+        logger.exception("LLM 测试异常 (user=%s), error: %s", safe_log(user_id), str(e))
+        return {"ok": False, "error": "LLM 测试失败"}
 
 
 @router.post("/test-image")
 def test_image_gen(user_id: str = Depends(get_current_user)):
-    """测试图像生成 API 是否可用（真正生成一张图片并返回 base64 供前端展示）。"""
+    """测试图像生成 API 是否可用（真正生成一张图片并返回 base64 供前端展示）。
+
+    复用 `build_image_gen_tool` 工厂，确保测试链路与实际生成链路完全一致。
+    """
     try:
         import base64
-
-        # 额度检查
-        check_and_consume(user_id, "image")
+        import os
+        import tempfile
+        from pathlib import Path
 
         from database import get_setting
-        import os
+        from agents.tools.image_gen_factory import build_image_gen_tool
 
+        # 前置校验：在调工具前给出更友好的错误
         base_url = get_setting(user_id, "img_base_url") or os.getenv("IMG_BASE_URL", "")
         api_key = get_setting(user_id, "img_api_key") or os.getenv("IMG_API_KEY", "")
-        model = get_setting(user_id, "img_model") or os.getenv("IMG_MODEL", "")
         if not base_url:
             return {"ok": False, "error": "未配置图像生成 Base URL"}
         if not api_key:
             return {"ok": False, "error": "未配置图像生成 API Key"}
 
-        try:
-            import requests as _requests
-        except ImportError:
-            return {"ok": False, "error": "requests 库未安装"}
+        # 额度检查
+        check_and_consume(user_id, "image")
 
-        # 构造最小请求体，生成一张小尺寸测试图片
-        payload = {
-            "prompt": "A beautiful sunset over a calm ocean",
-            "size": "512x512",
-            "response_format": "b64_json",
-            "n": 1,
-        }
-        if model:
-            payload["model"] = model
+        # 构建工具并生成测试图片到临时目录
+        tool = build_image_gen_tool(user_id, before_call_hook=None)
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            result = tool(
+                prompt="A beautiful sunset over a calm ocean",
+                output_dir=tmp_dir,
+                size="512*512",
+                timeout=120,
+            )
 
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }
+            # 工具失败时返回的是 "Error: ..." 字符串
+            if isinstance(result, str) and result.startswith("Error:"):
+                return {"ok": False, "error": result[len("Error:") :].strip()}
 
-        resp = _requests.post(
-            f"{base_url.rstrip('/')}/images/generations",
-            json=payload,
-            headers=headers,
-            timeout=120,
-        )
+            # 成功返回格式："图片生成成功，路径：<path>"
+            prefix = "图片生成成功，路径："
+            if not (isinstance(result, str) and prefix in result):
+                return {"ok": False, "error": f"图像工具返回异常: {result}"}
 
-        if resp.status_code != 200:
-            try:
-                detail = resp.json().get("error", {}).get("message", resp.text[:300])
-            except Exception:
-                detail = resp.text[:300]
-            return {"ok": False, "error": f"HTTP {resp.status_code}: {detail}"}
+            image_path = Path(result.split(prefix, 1)[1].strip())
+            if not image_path.exists():
+                return {"ok": False, "error": f"图片文件不存在: {image_path}"}
 
-        resp_json = resp.json()
-        data_list = resp_json.get("data") or []
-        if not data_list:
-            return {"ok": False, "error": "接口未返回图像数据"}
-
-        item = data_list[0]
-        b64_data = item.get("b64_json")
-        url = item.get("url")
-
-        # 优先使用 b64_json，否则下载 url 再转 base64
-        if b64_data:
-            image_b64 = b64_data
-        elif url:
-            try:
-                img_resp = _requests.get(url, timeout=60)
-                img_resp.raise_for_status()
-                image_b64 = base64.b64encode(img_resp.content).decode("utf-8")
-            except Exception as dl_err:
-                return {"ok": False, "error": f"图片下载失败: {dl_err}"}
-        else:
-            return {"ok": False, "error": "接口返回数据中无 b64_json 或 url 字段"}
+            image_b64 = base64.b64encode(image_path.read_bytes()).decode("utf-8")
 
         return {
             "ok": True,
@@ -193,7 +173,10 @@ def test_image_gen(user_id: str = Depends(get_current_user)):
         }
 
     except Exception as e:  # pylint: disable=broad-except
-        return {"ok": False, "error": str(e)}
+        logger.exception(
+            "图像生成测试异常 (user=%s), error: %s", safe_log(user_id), str(e)
+        )
+        return {"ok": False, "error": "图像生成测试失败"}
 
 
 @router.post("/test-tavily")
@@ -225,4 +208,7 @@ def test_tavily(user_id: str = Depends(get_current_user)):
             "error": "tavily-python 未安装，请运行 pip install tavily-python",
         }
     except Exception as e:  # pylint: disable=broad-except
-        return {"ok": False, "error": str(e)}
+        logger.exception(
+            "Tavily API 测试异常 (user=%s), error: %s", safe_log(user_id), str(e)
+        )
+        return {"ok": False, "error": "Tavily API 测试失败"}

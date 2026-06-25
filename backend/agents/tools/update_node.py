@@ -82,7 +82,7 @@ class UpdateNodeTool(BaseTool):
 
     def run(
         self,
-        node_id: str,
+        node_id: str = "",
         title: str = None,
         description: str = None,
         tags: list[str] = None,
@@ -93,6 +93,7 @@ class UpdateNodeTool(BaseTool):
         parent_node_ids: list[str] = None,
         related_node_ids: list[str] = None,
         contrast_node_ids: list[str] = None,
+        **kwargs,
     ) -> str:
         # 验证节点归属
         node = self._repo.get_by_id(node_id)

@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 
 from repositories import NodeRepository, SessionRepository, DailyPlanRepository
 from services.llm_factory import get_llm
+from utils.log_safe import safe_log
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +116,7 @@ class DailyPlanService:
         recent_sessions = self.session_repo.get_all(user_id, limit=3)
 
         if len(all_nodes) < self._MIN_NODES:
-            logger.info("用户 %s 暂无知识节点，跳过 LLM 生成", user_id)
+            logger.info("用户 %s 暂无知识节点，跳过 LLM 生成", safe_log(user_id))
             return {"tasks": [], "recommendation": {}}
 
         def fmt_node(n):

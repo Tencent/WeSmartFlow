@@ -6,14 +6,13 @@ Tutor Agent 只需描述"想展示什么内容"，CardWriterAgent 负责：
   2. 调用 latex_pdf_compile 编译 PDF
   3. 编译失败时自动修复重试
 
-生成的 PDF 保存至 documents/cards/{card_id}/card.pdf，流式成功结果返回 JSON：{"file_id": "{card_id}/card.pdf", "script": "..."}。
+生成的 PDF 保存至 documents/cards/{card_id}/card.pdf，流式成功结果返回 JSON：{"file_id": card_id, "script": "..."}。
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import os
 import shutil
 import tempfile
 import uuid
@@ -23,9 +22,9 @@ from agent_core.agent.react import ReActAgent
 from agent_core.context.simple import SimpleContextBuilder
 from agent_core.tool.base import BaseTool
 from agent_core.tool.filesystem import WriteFileTool
-from agent_core.tool.openai_image_gen import OpenAIImageGenTool
 from agent_core.tool.pdf_compile import LatexPdfCompileTool
 from agent_core.tool.registry import ToolRegistry
+from agents.tools.image_gen_factory import build_image_gen_tool
 from config import CARDS_DIR, TEX_TEMPLATE_DIR
 from services.llm_factory import get_llm
 from services.quota import check_and_consume
@@ -100,36 +99,6 @@ array, enumitem
 """
 
 
-def _build_image_tool(user_id, before_call_hook=None):
-    """构建图像生成工具实例（OpenAI 兼容接口）。"""
-    import logging
-    import os
-
-    _logger = logging.getLogger(__name__)
-
-    try:
-        from database import get_setting
-
-        api_key = get_setting(user_id, "img_api_key") or os.getenv("IMG_API_KEY", "any")
-        base_url = get_setting(user_id, "img_base_url") or os.getenv(
-            "IMG_BASE_URL", "http://localhost:8080/v1"
-        )
-        model = get_setting(user_id, "img_model") or os.getenv("IMG_MODEL") or None
-    except Exception as e:  # pylint: disable=broad-except
-        _logger.warning(
-            "图片生成配置读取失败（将使用默认值，图片功能可能不可用）: %s", e
-        )
-        api_key = os.getenv("IMG_API_KEY", "any")
-        base_url = os.getenv("IMG_BASE_URL", "http://localhost:8080/v1")
-        model = os.getenv("IMG_MODEL") or None
-    return OpenAIImageGenTool(
-        api_key=api_key,
-        base_url=base_url,
-        model=model,
-        before_call_hook=before_call_hook,
-    )
-
-
 def _build_card_writer_agent(work_dir: Path, user_id) -> ReActAgent:
     """创建 CardWriterAgent，工作目录限定在 work_dir 下，支持插图生成。"""
 
@@ -139,7 +108,7 @@ def _build_card_writer_agent(work_dir: Path, user_id) -> ReActAgent:
     tools = ToolRegistry(
         [
             WriteFileTool(workspace=work_dir, allowed_dir=work_dir),
-            _build_image_tool(user_id, before_call_hook=_image_hook),
+            build_image_gen_tool(user_id, before_call_hook=_image_hook),
             LatexPdfCompileTool(TEX_TEMPLATE_DIR),
         ]
     )
@@ -157,7 +126,7 @@ class GenerateCardTool(BaseTool):
     委派 CardWriterAgent 生成单页 PDF 知识卡片（Beamer + SimplePlus 主题）。
 
     Tutor Agent 描述想展示的内容，CardWriterAgent 负责编写 tex、编译 PDF。
-    流式成功结果返回 JSON：{"file_id": "{card_id}/card.pdf", "script": "..."}；失败时返回 Error: 开头的错误信息。
+    流式成功结果返回 JSON：{"file_id": card_id, "script": "..."}；失败时返回 Error: 开头的错误信息。
     """
 
     name = "generate_card"
@@ -332,14 +301,11 @@ class GenerateCardTool(BaseTool):
             yield "正在保存文档记录..."
 
             # 创建文档记录
-            self._create_document_record(
-                card_id, f"{card_id}/card.pdf", title, content, node_ids
-            )
+            self._create_document_record(card_id, "card.pdf", title, content, node_ids)
 
             # 最后 yield 最终结果字符串，供父 Agent 写入 history
-            yield json.dumps(
-                {"file_id": f"{card_id}/card.pdf", "script": script}, ensure_ascii=False
-            )
+            # file_id 即 documents.id（与 card_id 一致）
+            yield json.dumps({"file_id": card_id, "script": script}, ensure_ascii=False)
 
     def _create_document_record(
         self,
@@ -351,25 +317,21 @@ class GenerateCardTool(BaseTool):
     ):
         """创建文档记录并建立与节点的关联"""
         try:
-            doc_repo = DocumentRepository()
-
-            card_dir = CARDS_DIR / card_id
-            pdf_path = card_dir / "card.pdf"
-            file_size = os.path.getsize(pdf_path) if pdf_path.exists() else 0
-            storage_key = f"documents/cards/{card_id}/card.pdf"
-
             if not self.user_id:
                 raise ValueError("GenerateCardTool 缺少 user_id，拒绝写入脏数据")
-            doc = doc_repo.create_generated(
+
+            doc_repo = DocumentRepository()
+            card_dir = CARDS_DIR / card_id
+            pdf_path = card_dir / "card.pdf"
+
+            doc = doc_repo.register_produced(
                 doc_id=card_id,
                 user_id=self.user_id,
                 title=title,
-                file_name=file_name,
-                storage_key=storage_key,
-                file_type="pdf",
-                file_size=file_size,
-                generation_prompt=content_description,
+                file_path=pdf_path,
+                file_type="pdf_card",
                 session_id=self.session_id,
+                generation_prompt=content_description,
                 node_ids=node_ids or [],
             )
 

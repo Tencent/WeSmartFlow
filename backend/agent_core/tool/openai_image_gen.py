@@ -109,8 +109,8 @@ class OpenAIImageGenTool(BaseTool):
 
     def run(
         self,
-        prompt: str,
-        output_dir: str,
+        prompt: str = "",
+        output_dir: str = "",
         size: str = "1920x1080",
         negative_prompt: Optional[str] = None,
         timeout: int = 60,

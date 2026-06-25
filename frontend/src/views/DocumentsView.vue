@@ -91,9 +91,10 @@
         @click="selectDoc(doc)"
       >
         <!-- File icon -->
-        <div class="doc-icon" :class="`type-${doc.type}`">
+        <div class="doc-icon" :class="`type-${doc.renderType}`">
+          <!-- pdf 家族 -->
           <svg
-            v-if="doc.type === 'pdf'"
+            v-if="doc.renderType === 'pdf'"
             width="18"
             height="18"
             viewBox="0 0 24 24"
@@ -105,8 +106,36 @@
             <polyline points="14 2 14 8 20 8" />
             <path d="M9 13h6M9 17h3" />
           </svg>
+          <!-- html_card 家族 -->
           <svg
-            v-else-if="doc.type === 'markdown'"
+            v-else-if="doc.renderType === 'html_card'"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+          >
+            <rect x="3" y="4" width="18" height="16" rx="2" />
+            <line x1="3" y1="9" x2="21" y2="9" />
+            <line x1="7" y1="13" x2="15" y2="13" />
+            <line x1="7" y1="16" x2="12" y2="16" />
+          </svg>
+          <!-- viz 家族 -->
+          <svg
+            v-else-if="doc.renderType === 'viz'"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+          >
+            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+          </svg>
+          <!-- markdown 家族 -->
+          <svg
+            v-else-if="doc.renderType === 'markdown'"
             width="18"
             height="18"
             viewBox="0 0 24 24"
@@ -119,6 +148,20 @@
             <polyline points="8 13 10 15 8 17" />
             <line x1="12" y1="13" x2="14" y2="13" />
           </svg>
+          <!-- json 家族 -->
+          <svg
+            v-else-if="doc.renderType === 'json'"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+          >
+            <path d="M8 3H5a2 2 0 00-2 2v4M8 21H5a2 2 0 01-2-2v-4" />
+            <path d="M16 3h3a2 2 0 012 2v4M16 21h3a2 2 0 002-2v-4" />
+          </svg>
+          <!-- text 其他家族（fallback） -->
           <svg
             v-else
             width="18"
@@ -142,6 +185,7 @@
             <span class="source-tag" :class="doc.source">
               {{ doc.source === "uploaded" ? "📤 上传" : "🤖 AI生成" }}
             </span>
+            <span class="type-tag">{{ doc.typeLabel }}</span>
             <span class="doc-size">{{ formatSize(doc.size_bytes) }}</span>
             <span class="doc-date">{{ formatDate(doc.uploaded_at) }}</span>
           </div>
@@ -422,21 +466,27 @@
             <div>正在加载文档内容...</div>
           </div>
 
-          <!-- HTML 卡片类型：复用 HtmlCard 组件 -->
+          <!-- HTML 知识卡片（html_card）：复用 HtmlCard 组件 -->
           <div
-            v-else-if="selectedDoc?.type === 'html'"
+            v-else-if="selectedDoc?.renderType === 'html_card'"
             class="doc-preview-html"
           >
-            <HtmlCard :file-id="selectedDoc.id + '/card.html'" />
+            <HtmlCard :file-id="selectedDoc.id" />
           </div>
 
-          <!-- Viz 可视化类型：复用 VizCard 沙盒渲染 -->
-          <div v-else-if="selectedDoc?.type === 'viz'" class="doc-preview-viz">
+          <!-- Viz 交互可视化：复用 VizCard 沙盒渲染 -->
+          <div
+            v-else-if="selectedDoc?.renderType === 'viz'"
+            class="doc-preview-viz"
+          >
             <VizCard :viz-id="selectedDoc.id" :title="selectedDoc.name" />
           </div>
 
-          <!-- PDF 类型：pdf.js 渲染 -->
-          <div v-else-if="selectedDoc?.type === 'pdf'" class="doc-preview-pdf">
+          <!-- PDF 家族（pdf / pdf_card / chapter_pdf）：pdf.js 渲染 -->
+          <div
+            v-else-if="selectedDoc?.renderType === 'pdf'"
+            class="doc-preview-pdf"
+          >
             <div v-if="pdfState.totalPages > 0" class="pdf-viewer">
               <div class="pdf-toolbar">
                 <button
@@ -464,19 +514,31 @@
             <div v-else class="no-content">PDF 加载失败</div>
           </div>
 
-          <!-- Markdown 类型：渲染为 HTML -->
+          <!-- Markdown 家族（md / md_note / course_plan / chapter_overview / chapter_exercises） -->
           <div
-            v-else-if="
-              selectedDoc?.type === 'md' || selectedDoc?.type === 'markdown'
-            "
+            v-else-if="selectedDoc?.renderType === 'markdown'"
             class="doc-preview-md"
           >
             <div
-              v-if="documentContent"
+              v-if="rawText"
+              class="markdown-body"
+              v-html="renderMd(rawText)"
+            ></div>
+            <div
+              v-else-if="documentContent"
               class="markdown-body"
               v-html="renderMd(documentContent.content || '')"
             ></div>
             <div v-else class="no-content">无法加载文档内容</div>
+          </div>
+
+          <!-- JSON 家族（course_outline / chapter_audio / chapter_notes） -->
+          <div
+            v-else-if="selectedDoc?.renderType === 'json'"
+            class="doc-preview-json"
+          >
+            <pre v-if="rawText" class="json-block">{{ rawText }}</pre>
+            <div v-else class="no-content">无法加载 JSON 内容</div>
           </div>
 
           <!-- 其他类型（txt / docx 等）：分段纯文本展示 -->
@@ -803,6 +865,7 @@ const pendingFiles = ref([]);
 const fileInput = ref(null);
 const uploading = ref(false);
 const documentContent = ref(null);
+const rawText = ref("");
 const loadingContent = ref(false);
 const selectedNodeId = ref("");
 const availableNodes = ref([]);
@@ -811,12 +874,65 @@ const nodeSearchQuery = ref("");
 // ── 数据（从后端加载）──────────────────────────────────────────
 const docs = ref([]);
 
+// 后端 file_type → 前端渲染家族的映射
+//   pdf       —— 用 pdf.js 渲染
+//   html_card —— 用 HtmlCard 组件渲染（迭代码调 /raw）
+//   viz       —— 用 VizCard 沙盒渲染
+//   markdown  —— 拉 raw 文本后用 marked 渲染
+//   json      —— 拉 raw 后以样式化 JSON 收边展示
+//   text      —— fallback，走分段抽取
+const RENDER_TYPE_MAP = {
+  // 原始 / 上传
+  pdf: "pdf",
+  md: "markdown",
+  markdown: "markdown",
+  txt: "text",
+  docx: "text",
+  // AI 生成 — 对话式
+  html_card: "html_card",
+  viz: "viz",
+  pdf_card: "pdf",
+  md_note: "markdown",
+  // AI 生成 — 沉浸式
+  course_outline: "json",
+  course_plan: "markdown",
+  chapter_overview: "markdown",
+  chapter_pdf: "pdf",
+  chapter_exercises: "markdown",
+  chapter_audio: "json",
+  chapter_notes: "json",
+};
+
+// file_type 人读标签
+const FILE_TYPE_LABEL = {
+  pdf: "PDF",
+  md: "Markdown",
+  markdown: "Markdown",
+  txt: "纯文本",
+  docx: "Word 文档",
+  html_card: "HTML 知识卡片",
+  viz: "交互可视化",
+  pdf_card: "PDF 知识卡片",
+  md_note: "Markdown 笔记",
+  course_outline: "课程大纲",
+  course_plan: "学习建议",
+  chapter_overview: "章节预习手册",
+  chapter_pdf: "章节讲义",
+  chapter_exercises: "章节习题",
+  chapter_audio: "章节音频包",
+  chapter_notes: "章节讲解稿",
+};
+
 // 后端字段 → 模板字段的适配
 function adaptDoc(raw) {
+  const fileType = raw.file_type || "pdf";
+  const renderType = RENDER_TYPE_MAP[fileType] || "text";
   return {
     ...raw,
     name: raw.title + (raw.file_type ? `.${raw.file_type}` : ""),
-    type: raw.file_type || "pdf",
+    type: fileType, // 保留原始后端 file_type
+    renderType, // 渲染家族
+    typeLabel: FILE_TYPE_LABEL[fileType] || fileType.toUpperCase(),
     size_bytes: raw.file_size || 0,
     status: raw.status === "ready" ? "processed" : raw.status,
     extracted_node_ids: raw.node_ids || [],
@@ -872,19 +988,22 @@ async function viewContent(doc) {
   showContentModal.value = true;
   loadingContent.value = true;
   documentContent.value = null;
+  rawText.value = "";
   pdfDoc = null;
   pdfState.value = { currentPage: 1, totalPages: 0 };
 
-  // html 和 viz 类型不需要加载文本内容，直接用组件渲染
-  if (doc.type === "html" || doc.type === "viz") {
+  const renderType = doc.renderType;
+
+  // html_card / viz 不需要加载文本内容，直接交给组件
+  if (renderType === "html_card" || renderType === "viz") {
     loadingContent.value = false;
     return;
   }
 
-  // pdf 类型：用 pdf.js 渲染
-  if (doc.type === "pdf") {
+  // pdf 家族：用 pdf.js 渲染
+  if (renderType === "pdf") {
     try {
-      const pdfUrl = `${BASE_URL}/api/documents/${doc.id}/download`;
+      const pdfUrl = `${BASE_URL}/api/documents/${doc.id}/raw`;
       const pdfDocument = await pdfjsLib.getDocument({
         url: pdfUrl,
         httpHeaders: authHeaders(),
@@ -903,7 +1022,31 @@ async function viewContent(doc) {
     return;
   }
 
-  // md / txt / docx 等：加载文本内容
+  // markdown / json 家族：直接拉 raw 原始文本
+  if (renderType === "markdown" || renderType === "json") {
+    try {
+      const res = await api.getRaw(`/api/documents/${doc.id}/raw`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      let text = await res.text();
+      // JSON 尝试美化
+      if (renderType === "json") {
+        try {
+          text = JSON.stringify(JSON.parse(text), null, 2);
+        } catch (e) {
+          // 保持原文
+          console.warn("JSON 格式化失败:", e.message);
+        }
+      }
+      rawText.value = text;
+    } catch (e) {
+      console.warn("加载原始文本失败:", e.message);
+    } finally {
+      loadingContent.value = false;
+    }
+    return;
+  }
+
+  // 其他（txt / docx / fallback）：走分段接口
   try {
     const content = await documentApi.getContent(doc.id);
     documentContent.value = content;
@@ -941,7 +1084,7 @@ function pdfNextPage() {
 // 下载文档（带鉴权）
 async function downloadDocument(doc) {
   try {
-    const res = await api.getRaw(`/api/documents/${doc.id}/download`);
+    const res = await api.getRaw(`/api/documents/${doc.id}/raw?download=1`);
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -1258,9 +1401,51 @@ async function addNodeToDocument() {
   background: rgba(99, 102, 241, 0.1);
   color: var(--brand-light);
 }
-.doc-icon.type-txt {
+.doc-icon.type-html_card {
+  background: rgba(34, 197, 94, 0.1);
+  color: var(--green);
+}
+.doc-icon.type-viz {
+  background: rgba(168, 85, 247, 0.12);
+  color: #c084fc;
+}
+.doc-icon.type-json {
+  background: rgba(234, 179, 8, 0.1);
+  color: var(--yellow);
+}
+.doc-icon.type-text {
   background: var(--bg-hover);
   color: var(--text-muted);
+}
+
+/* 类型标签（人读 file_type） */
+.type-tag {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--bg-hover);
+  white-space: nowrap;
+}
+
+/* JSON 预览块 */
+.doc-preview-json {
+  height: 100%;
+}
+.doc-preview-json .json-block {
+  margin: 0;
+  padding: 14px 16px;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-primary);
+  background: var(--bg-hover);
+  border-radius: var(--radius-md);
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow: auto;
+  max-height: calc(80vh - 180px);
 }
 
 /* Doc info */

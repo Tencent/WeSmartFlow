@@ -285,8 +285,8 @@ class SkillsLoader:
         if "requires" not in result and "requires" in fm:
             try:
                 result["requires"] = json.loads(fm["requires"])
-            except (json.JSONDecodeError, TypeError):
-                pass
+            except (json.JSONDecodeError, TypeError) as e:
+                logger.warning("解析 skill 依赖失败: %s", e)
 
         return result
 

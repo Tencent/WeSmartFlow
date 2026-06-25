@@ -108,8 +108,8 @@ brew install --cask mactex-no-gui
 # 下载 Beamer 主题（可选）
 git clone https://github.com/pm25/SimplePlus-BeamerTheme.git SimplePlus-BeamerTheme
 
-# 配置环境变量
-cp .env.example .env
+# 配置环境变量（.env 需放在仓库根，同级于 backend/）
+cp backend/.env.example .env
 # 编辑 .env 填入 API Key 等配置
 
 # 启动服务（默认端口 8080）

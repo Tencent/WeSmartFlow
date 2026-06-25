@@ -1,35 +1,46 @@
 """沉浸式学习的数据库持久化层。
 
-集中处理 sessions / study_logs / documents 三张表的写入。
-运行在后台线程上（`asyncio.to_thread`），因此需自管
-数据库连接（`with get_db()`），但具体表访问委托给 repositories。
+职责：
+  - 创建会话记录、收尾会话
+  - 把章节产物（PDF/MD/习题/音频/讲解稿/大纲/学习建议）登记到 documents 表
+  - 操作 sessions.canvas_blocks / files / workspace
+  - 清理孤儿课程目录
+
+每个 ``register_xxx`` 函数都满足同一契约：
+
+  - 输入文件不存在或为空 → 返回 ``None``
+  - 成功登记 → 返回 ``doc_id``
+  - 主资源 ``storage_key`` 始终指向**前端可直接渲染的入口文件**
+
+伴生文件（HTML 卡片图片、章节音频帧）不单独登记，
+通过 ``GET /api/documents/{doc_id}/asset/{sub}`` 访问。
 """
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
-from typing import Dict, List
+from typing import List, Optional
 
 from models.session import SessionCreate, SessionFile
 from repositories import (
+    DocumentRepository,
     SessionRepository,
     StudyLogRepository,
-    DocumentRepository,
 )
-from repositories.base import new_id
 
-from config import DATA_DIR, COURSES_DIR
+from config import COURSES_DIR
+from utils.log_safe import safe_log
 
 logger = logging.getLogger(__name__)
 
 
-def create_session(topic: str, user_id: str) -> str:
-    """创建一个 immersive 会话记录，返回 session_id。
+# ── 会话生命周期 ────────────────────────────────────────────────
 
-    immersive 场景需要自定义 title=`[AI课程] {topic}`，
-    所以先 create 再 set_title。
-    """
+
+def create_session(topic: str, user_id: str) -> str:
+    """创建一个 immersive 会话记录，返回 session_id。"""
     repo = SessionRepository()
     session = repo.create(user_id, SessionCreate(topic=topic, node_ids=[]))
     repo.set_title(session.id, f"[AI课程] {topic}")
@@ -53,7 +64,7 @@ def finish_session(
     session_id: str,
     duration_minutes: int,
     node_ids: List[str],
-    files: List[Dict],
+    files: List[dict],
     user_id: str,
 ) -> None:
     """收尾会话并写入 study_logs。"""
@@ -71,187 +82,230 @@ def finish_session(
     )
 
 
-def register_chapter_documents(
+# ── 通用产物登记 helper ─────────────────────────────────────────
+
+
+def _register_if_ready(
+    *,
+    path: Path,
+    file_type: str,
+    title: str,
     session_id: str,
-    topic: str,
-    chapter_results: List[Dict],
-    node_ids: List[str],
     user_id: str,
-) -> None:
-    """将每章 PDF 登记到 documents 表，供文档管理页面展示。
-
-    幂等：
-    - 若同一 (session_id, storage_key) 尚未登记，则插入新记录
-    - 若已登记（说明此前已通过 register_single_chapter_document 落库），
-      则只更新 node_ids 字段，回填知识节点关联
-    """
-    registered = 0
-    backfilled = 0
-    doc_repo = DocumentRepository()
-    for ch in chapter_results:
-        if not ch.get("pdf_exists") or not ch.get("pdf_path"):
-            continue
-        pdf_path = ch.get("pdf_path", "")
-        abs_path = COURSES_DIR / pdf_path
-        try:
-            storage_key = str(abs_path.relative_to(DATA_DIR))
-        except ValueError:
-            storage_key = f"documents/courses/{pdf_path}"
-
-        if doc_repo.exists_by_session_and_key(session_id, storage_key):
-            # 已登记：回填 node_ids
-            try:
-                doc_repo.update_node_ids_by_session_and_key(
-                    session_id, storage_key, node_ids[:15]
-                )
-                backfilled += 1
-            except Exception as exc:  # pylint: disable=broad-except
-                logger.warning("回填节点关联失败 ch=%s: %s", ch.get("chapter_id"), exc)
-            continue
-
-        if register_single_chapter_document(
-            session_id=session_id,
-            topic=topic,
-            chapter=ch,
-            node_ids=node_ids,
-            user_id=user_id,
-        ):
-            registered += 1
-
-    logger.info(
-        "AI课程文档登记完成：新增 %d 个，回填节点 %d 个 → documents 表",
-        registered,
-        backfilled,
-    )
-
-
-def register_single_chapter_document(
-    session_id: str,
-    topic: str,
-    chapter: Dict,
-    node_ids: List[str],
-    user_id: str,
-) -> bool:
-    """登记单一章节的 PDF 到 documents 表。
-
-    供"每章生成完毕"立即落库使用，确保即使后续章节失败/中断，
-    已完成章节也会出现在文档管理页面。
-
-    Returns:
-        True - 已登记一条新记录；False - 跳过（PDF 不存在 / 已登记过）。
-    """
-    if not chapter.get("pdf_exists"):
-        return False
-    pdf_path = chapter.get("pdf_path", "")
-    if not pdf_path:
-        return False
-
-    abs_path = COURSES_DIR / pdf_path
-    file_size = abs_path.stat().st_size if abs_path.exists() else 0
-    num_pages = chapter.get("num_frames", 0)
-
-    pdf_file_name = (
-        Path(pdf_path).name
-        if pdf_path
-        else f"chapter_{chapter.get('chapter_id', '0')}.pdf"
-    )
-
-    # storage_key: 相对于 DATA_DIR 的路径
-    try:
-        storage_key = str(abs_path.relative_to(DATA_DIR))
-    except ValueError:
-        storage_key = f"documents/courses/{pdf_path}"
-
-    doc_repo = DocumentRepository()
-
-    # 幂等检查：同一 session + 同一 storage_key 不重复登记
-    if doc_repo.exists_by_session_and_key(session_id, storage_key):
-        logger.info(
-            "AI课程文档已登记，跳过：session=%s storage_key=%s",
-            session_id,
-            storage_key,
-        )
-        return False
-
-    doc_id = new_id()
-    doc_repo.create_generated(
-        doc_id=doc_id,
+    prompt: str = "",
+    node_ids: Optional[List[str]] = None,
+    total_pages: Optional[int] = None,
+) -> Optional[str]:
+    """统一登记入口：文件存在且非空才登记，返回 ``doc_id`` 或 ``None``。"""
+    if not path or not path.exists() or path.stat().st_size == 0:
+        return None
+    doc = DocumentRepository().register_produced(
         user_id=user_id,
-        title=f"[AI课程] {topic} — 第{chapter.get('chapter_id', '?')}章 {chapter.get('title', '')}",
-        file_name=pdf_file_name,
-        storage_key=storage_key,
-        file_type="pdf",
-        file_size=file_size,
-        generation_prompt=f"AI主导学习课程: {topic}",
+        title=title,
+        file_path=path,
+        file_type=file_type,
         session_id=session_id,
-        node_ids=node_ids[:15] if node_ids else [],
+        generation_prompt=prompt,
+        node_ids=(node_ids or [])[:15],
+        total_pages=total_pages,
     )
-    if num_pages:
-        doc_repo.set_pages(doc_id, num_pages)
+    logger.info("已登记产物: file_type=%s doc_id=%s path=%s", file_type, doc.id, path)
+    return doc.id
 
-    logger.info(
-        "AI课程章节文档已登记：第%s章 → doc_id=%s",
-        chapter.get("chapter_id", "?"),
-        doc_id,
+
+# ── 课程级产物 ───────────────────────────────────────────────────
+
+
+def register_course_outline(
+    *,
+    session_id: str,
+    topic: str,
+    outline_path: Path,
+    user_id: str,
+) -> Optional[str]:
+    """登记课程大纲 ``outline.json``。"""
+    return _register_if_ready(
+        path=outline_path,
+        file_type="course_outline",
+        title=f"[AI课程] {topic} · 大纲",
+        session_id=session_id,
+        user_id=user_id,
+        prompt=f"AI主导学习课程: {topic}（大纲）",
     )
-    return True
 
 
-def register_chapter_overview_md(
+def register_course_plan(
+    *,
+    session_id: str,
+    topic: str,
+    plan_path: Path,
+    user_id: str,
+) -> Optional[str]:
+    """登记整体学习建议 ``plan.md``。"""
+    return _register_if_ready(
+        path=plan_path,
+        file_type="course_plan",
+        title=f"[AI课程] {topic} · 个性化学习建议",
+        session_id=session_id,
+        user_id=user_id,
+        prompt=f"AI主导学习课程: {topic}（学习建议）",
+    )
+
+
+# ── 章节级产物 ───────────────────────────────────────────────────
+
+
+def register_chapter_overview(
+    *,
     session_id: str,
     topic: str,
     chapter_id: int,
     chapter_title: str,
-    md_abs_path: Path,
+    md_path: Path,
     user_id: str,
-    node_ids: List[str] | None = None,
-) -> bool:
-    """将章节核心要点 markdown 登记到 documents 表。
-
-    与 PDF 平级的章节产物：让用户在文档管理里也能看到这份 .md。
-
-    幂等：相同 (session_id, storage_key) 不重复登记。
-
-    Returns:
-        True - 新增一条记录；False - 跳过（文件不存在 / 已登记过）。
-    """
-    if not md_abs_path or not md_abs_path.exists():
-        return False
-
-    file_size = md_abs_path.stat().st_size
-    if file_size == 0:
-        return False
-
-    try:
-        storage_key = str(md_abs_path.relative_to(DATA_DIR))
-    except ValueError:
-        # 兜底：保留 documents/courses 风格相对前缀
-        storage_key = f"documents/courses/{md_abs_path.name}"
-
-    doc_repo = DocumentRepository()
-
-    if doc_repo.exists_by_session_and_key(session_id, storage_key):
-        return False
-
-    doc_id = new_id()
-    doc_repo.create_generated(
-        doc_id=doc_id,
-        user_id=user_id,
-        title=f"[AI课程] {topic} — 第{chapter_id}章 {chapter_title} · 核心要点",
-        file_name=md_abs_path.name,
-        storage_key=storage_key,
-        file_type="md",
-        file_size=file_size,
-        generation_prompt=f"AI主导学习课程: {topic}（章节核心要点）",
+    node_ids: Optional[List[str]] = None,
+) -> Optional[str]:
+    """登记一章预习手册 markdown。"""
+    return _register_if_ready(
+        path=md_path,
+        file_type="chapter_overview",
+        title=f"[AI课程] {topic} — 第{chapter_id}章 {chapter_title} · 预习手册",
         session_id=session_id,
-        node_ids=(node_ids or [])[:15],
+        user_id=user_id,
+        prompt=f"AI主导学习课程: {topic}（章节预习手册）",
+        node_ids=node_ids,
     )
-    logger.info(
-        "AI课程章节核心要点 MD 已登记：第%s章 → doc_id=%s",
-        chapter_id,
-        doc_id,
+
+
+def register_chapter_pdf(
+    *,
+    session_id: str,
+    topic: str,
+    chapter_id: int,
+    chapter_title: str,
+    pdf_path: Path,
+    num_pages: int,
+    user_id: str,
+    node_ids: Optional[List[str]] = None,
+) -> Optional[str]:
+    """登记一章 PDF 讲义。"""
+    return _register_if_ready(
+        path=pdf_path,
+        file_type="chapter_pdf",
+        title=f"[AI课程] {topic} — 第{chapter_id}章 {chapter_title}",
+        session_id=session_id,
+        user_id=user_id,
+        prompt=f"AI主导学习课程: {topic}",
+        node_ids=node_ids,
+        total_pages=num_pages or None,
     )
-    return True
+
+
+def register_chapter_exercises(
+    *,
+    session_id: str,
+    topic: str,
+    chapter_id: int,
+    chapter_title: str,
+    exercises_path: Path,
+    user_id: str,
+    node_ids: Optional[List[str]] = None,
+) -> Optional[str]:
+    """登记一章习题 markdown。"""
+    return _register_if_ready(
+        path=exercises_path,
+        file_type="chapter_exercises",
+        title=f"[AI课程] {topic} — 第{chapter_id}章 {chapter_title} · 习题",
+        session_id=session_id,
+        user_id=user_id,
+        prompt=f"AI主导学习课程: {topic}（章节习题）",
+        node_ids=node_ids,
+    )
+
+
+def register_chapter_notes(
+    *,
+    session_id: str,
+    topic: str,
+    chapter_id: int,
+    chapter_title: str,
+    notes_path: Path,
+    user_id: str,
+) -> Optional[str]:
+    """登记一章 ``speaker_notes.json`` 讲解稿。"""
+    return _register_if_ready(
+        path=notes_path,
+        file_type="chapter_notes",
+        title=f"[AI课程] {topic} — 第{chapter_id}章 {chapter_title} · 讲解稿",
+        session_id=session_id,
+        user_id=user_id,
+        prompt=f"AI主导学习课程: {topic}（章节讲解稿）",
+    )
+
+
+def register_chapter_audio(
+    *,
+    session_id: str,
+    topic: str,
+    chapter_id: int,
+    chapter_title: str,
+    audio_dir: Path,
+    audio_results: list[dict],
+    speaker_notes: list[str],
+    user_id: str,
+) -> Optional[str]:
+    """登记一章音频包到 documents（每章一条记录）。
+
+    主资源是 ``audio/manifest.json``（包含每帧的 filename / duration / 文本），
+    各 wav 帧通过 ``GET /api/documents/{doc_id}/asset/{filename}`` 访问。
+
+    会自动写 ``manifest.json`` 到 ``audio_dir`` 下。
+    """
+    if not audio_dir or not audio_dir.exists():
+        return None
+
+    successful = [r for r in (audio_results or []) if r.get("success")]
+    if not successful:
+        return None
+
+    frames = []
+    for i, r in enumerate(successful):
+        frames.append(
+            {
+                "index": i + 1,
+                "filename": r.get("filename", f"frame_{i + 1:03d}.wav"),
+                "duration_seconds": r.get("duration_seconds", 0),
+                "text": speaker_notes[i] if i < len(speaker_notes) else "",
+            }
+        )
+
+    manifest = {
+        "chapter_id": chapter_id,
+        "chapter_title": chapter_title,
+        "frame_count": len(frames),
+        "total_duration_seconds": sum(f["duration_seconds"] for f in frames),
+        "frames": frames,
+    }
+    manifest_path = audio_dir / "manifest.json"
+    try:
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.warning("写入 audio manifest 失败 ch=%s: %s", chapter_id, exc)
+        return None
+
+    return _register_if_ready(
+        path=manifest_path,
+        file_type="chapter_audio",
+        title=f"[AI课程] {topic} — 第{chapter_id}章 {chapter_title} · 音频",
+        session_id=session_id,
+        user_id=user_id,
+        prompt=f"AI主导学习课程: {topic}（章节音频）",
+    )
+
+
+# ── workspace / canvas / files 操作 ─────────────────────────────
 
 
 def update_workspace(session_id: str, **patch) -> dict:
@@ -283,24 +337,27 @@ def append_session_file(
     session_id: str,
     file_id: str,
     title: str,
-    file_type: str = "pdf",
+    file_type: str,
 ) -> None:
-    """将已生成文件立即登记到 session.files，避免部分生成中断后丢失。"""
+    """将已生成文件登记到 ``session.files``。
+
+    ``file_id`` 必须是 ``documents.id``（uuid）。
+    """
     SessionRepository().append_session_file(
         session_id,
         SessionFile(file_id=file_id, title=title, file_type=file_type),
     )
 
 
+# ── 启动期清理 ──────────────────────────────────────────────────
+
+
 def cleanup_orphan_course_dirs() -> int:
-    """清理 COURSES_DIR 下的孤儿课程目录。
+    """清理 ``COURSES_DIR`` 下的孤儿课程目录。
 
     判定为孤儿的条件（任一满足即删）：
-    1. 目录里没有 outline.json（说明 planner 都没跑通）
-    2. 目录后缀的 session_id 在 sessions 表里查不到
-
-    Returns:
-        删除的目录数量。
+      1. 目录里没有 ``outline.json``（说明 planner 都没跑通）
+      2. 目录后缀的 ``session_id`` 在 sessions 表里查不到
     """
     import shutil
 
@@ -316,12 +373,9 @@ def cleanup_orphan_course_dirs() -> int:
         name = course_dir.name
         outline_file = course_dir / "outline.json"
 
-        # 提取 session_id：约定 slug 格式为 "<topic_slug>_<session_id>"
-        # session_id 是 uuid，含 4 个 '-'
         session_id_guess = ""
         if "_" in name:
             tail = name.rsplit("_", 1)[-1]
-            # 简单校验是否像 uuid
             if len(tail) >= 32 and tail.count("-") >= 4:
                 session_id_guess = tail
 
@@ -337,9 +391,12 @@ def cleanup_orphan_course_dirs() -> int:
                 if session is None:
                     is_orphan = True
                     reason = f"sessions 表中无对应记录 {session_id_guess}"
-            except Exception:
-                # 查询失败就保守地不删
-                pass
+            except Exception as e:
+                logger.warning(
+                    "查询 sessions 表时出错，无法验证 session_id %s: %s",
+                    safe_log(session_id_guess),
+                    e,
+                )
 
         if is_orphan:
             try:

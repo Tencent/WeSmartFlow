@@ -104,7 +104,7 @@ class AgentTool(BaseTool):
     # 同步执行
     # ------------------------------------------------------------------
 
-    def run(self, input: str, context: str = "", **kwargs: Any) -> str:  # noqa: A002
+    def run(self, input: str = "", context: str = "", **kwargs: Any) -> str:  # noqa: A002
         """调用子 Agent 并返回其最终输出文本。
 
         Args:
@@ -141,7 +141,7 @@ class AgentTool(BaseTool):
     # 异步执行
     # ------------------------------------------------------------------
 
-    async def async_run(self, input: str, context: str = "", **kwargs: Any) -> str:  # noqa: A002
+    async def async_run(self, input: str = "", context: str = "", **kwargs: Any) -> str:  # noqa: A002
         """异步调用子 Agent 并返回其最终输出文本。
 
         Args:
@@ -178,7 +178,7 @@ class AgentTool(BaseTool):
     # 流式执行
     # ------------------------------------------------------------------
 
-    async def async_stream_run(self, input: str, context: str = "", **kwargs: Any):  # noqa: A002
+    async def async_stream_run(self, input: str = "", context: str = "", **kwargs: Any):  # noqa: A002
         """流式调用子 Agent，将其 async_stream 事件逐个 yield 出来。
 
         yield 顺序：

@@ -25,7 +25,8 @@ from ..context.base import BaseContextBuilder
 from ..context.simple import SimpleContextBuilder
 from ..llm.base import BaseLLM, LLMResponse
 from ..tool.registry import ToolRegistry
-from .base import AgentFinishReason, AgentResult, BaseAgent
+from .base import AgentResult, BaseAgent
+from .events import AgentFinishReason
 
 logger = logging.getLogger(__name__)
 
@@ -403,8 +404,8 @@ class PlanAndSolveAgent(BaseAgent):
                 steps = data.get("steps", [])
                 if isinstance(steps, list) and steps:
                     return [str(s) for s in steps]
-            except json.JSONDecodeError:
-                pass
+            except json.JSONDecodeError as e:
+                logger.warning("解析步骤列表时出错: %s", e)
 
         # 尝试提取 JSON 数组
         array_match = re.search(r"\[[\s\S]*\]", content)
@@ -413,8 +414,8 @@ class PlanAndSolveAgent(BaseAgent):
                 steps = json.loads(array_match.group())
                 if isinstance(steps, list) and steps:
                     return [str(s) for s in steps]
-            except json.JSONDecodeError:
-                pass
+            except json.JSONDecodeError as e:
+                logger.warning("解析步骤列表时出错: %s", e)
 
         # 降级：按行解析编号列表（1. xxx / - xxx / * xxx）
         lines = [

@@ -15,7 +15,41 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from typing_extensions import LiteralString
+
 from database import get_db
+
+# 仅允许这些关键字开头的 SQL 进入 execute()。
+# 通过类型注解 LiteralString 让静态分析器（mypy/pyright/CodeQL）
+# 在调用点就拒绝非字面量 SQL；运行时再用白名单兜底，避免有人
+# 通过 # type: ignore 等手段绕过类型检查。
+_ALLOWED_SQL_PREFIXES = frozenset(
+    {
+        "SELECT",
+        "INSERT",
+        "UPDATE",
+        "DELETE",
+        "REPLACE",
+        "WITH",
+        "CREATE",
+        "DROP",
+        "ALTER",
+        "PRAGMA",
+    }
+)
+
+
+def _assert_safe_sql(sql: str) -> None:
+    """运行时校验：拒绝看起来不像合法 SQL 模板的字符串。
+
+    只检查关键字前缀，不做完整语法校验——后者由 sqlite3 自身完成。
+    任何用户输入都应通过 ``params`` 参数化绑定传入，禁止参与 SQL 拼接。
+    """
+    if not isinstance(sql, str) or not sql.strip():
+        raise ValueError("SQL 不能为空")
+    head = sql.lstrip().split(None, 1)[0].upper()
+    if head not in _ALLOWED_SQL_PREFIXES:
+        raise ValueError(f"非法 SQL 前缀: {head!r}")
 
 
 def new_id() -> str:
@@ -50,25 +84,41 @@ def _loads(s: Optional[str], default=None):
 
 
 class BaseRepository:
-    """Repository 基类。所有操作通过 with get_db() as conn 获取短连接。"""
+    """Repository 基类。所有操作通过 with get_db() as conn 获取短连接。
 
-    def _fetchone(self, sql: str, params: tuple = ()) -> Optional[dict]:
+    安全约定：
+    - ``sql`` 参数被注解为 ``LiteralString``，调用方只能传字符串字面量
+      （或由字面量拼接而成的字符串），任何来自用户输入/外部数据的字符
+      串都会被静态分析工具拒绝。
+    - 用户输入必须通过 ``params`` 参数绑定，由 sqlite3 驱动转义。
+    - ``_assert_safe_sql`` 在运行时再做一次白名单兜底。
+    """
+
+    def _fetchone(self, sql: LiteralString, params: tuple = ()) -> Optional[dict]:
+        _assert_safe_sql(sql)
         with get_db() as conn:
             row = conn.execute(sql, params).fetchone()
             return row_to_dict(row) if row else None
 
-    def _fetchall(self, sql: str, params: tuple = ()) -> list[dict]:
+    def _fetchall(self, sql: LiteralString, params: tuple = ()) -> list[dict]:
+        _assert_safe_sql(sql)
         with get_db() as conn:
             rows = conn.execute(sql, params).fetchall()
             return [row_to_dict(r) for r in rows]
 
-    def _execute(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
+    def _execute(self, sql: LiteralString, params: tuple = ()) -> sqlite3.Cursor:
+        _assert_safe_sql(sql)
         with get_db() as conn:
             cursor = conn.execute(sql, params)
             return cursor
 
-    def _executemany(self, operations: list[tuple[str, tuple]]) -> None:
-        """在同一个连接中执行多条 SQL（保证原子性）。"""
+    def _executemany(self, operations: list[tuple[LiteralString, tuple]]) -> None:
+        """在同一个连接中执行多条 SQL（保证原子性）。
+
+        每条 SQL 都先经过 ``_assert_safe_sql`` 校验，确保不会出现
+        外部输入直接拼成 SQL 模板的情况。
+        """
         with get_db() as conn:
             for sql, params in operations:
+                _assert_safe_sql(sql)
                 conn.execute(sql, params)

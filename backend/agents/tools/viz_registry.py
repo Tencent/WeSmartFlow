@@ -9,6 +9,15 @@ validate_viz_code.py 和 generate_viz.py 均从此处读取，
 from __future__ import annotations
 
 from pathlib import Path
+import logging
+import re
+from typing import Optional
+
+logger = logging.getLogger(__name__)
+
+# pattern 文件名合法字符集：仅允许 ASCII 字母/数字/下划线/连字符。
+# 任何包含 '/'、'\'、'.'、空白等其它字符的输入都会被判定非法。
+_PATTERN_KEY_RE = re.compile(r"^[a-z0-9_-]+$")
 
 # ── 1. EduViz API 白名单 ──────────────────────────────────────────────────────
 # key: API 名称
@@ -116,6 +125,58 @@ _PATTERNS_DIR = (
 )
 
 
+def _resolve_pattern_path(viz_pattern: str) -> Optional[Path]:
+    """将外部传入的 viz_pattern 名称安全地解析成 patterns 目录下的 .md 路径。
+
+    安全策略（白名单查表 + 双重防御）：
+      1. **白名单字符校验**：用户输入清洗后必须满足 ``[a-z0-9_-]+``；
+      2. **白名单查表（核心 sanitizer）**：用户输入**仅用于**与磁盘扫描得到的
+         真实文件名（``Path.stem``）做相等比较；最终用于拼路径的字符串
+         来自磁盘目录扫描结果，与用户输入物理上无任何引用关系；
+      3. **路径归一化兜底**：拼出的绝对路径必须位于 ``_PATTERNS_DIR`` 之下，
+         防止符号链接、``..`` 残留等极端情况。
+
+    返回 None 表示输入非法、不在白名单或目录不存在，调用方应按"找不到"处理。
+    """
+    if not viz_pattern or not _PATTERNS_DIR.exists():
+        return None
+
+    # ── 字符级白名单校验（仅用于尽早拒掉明显非法输入）──
+    requested = str(viz_pattern).split("|")[0].strip().lower().replace(" ", "_")
+    if not _PATTERN_KEY_RE.fullmatch(requested):
+        logger.warning("非法 viz_pattern 名称已拒绝")
+        return None
+
+    # ── 白名单查表（SAST sanitizer）──
+    # 关键：此处用 ``Path.stem`` 从磁盘目录扫描结果中取得"可信字符串"，
+    # 用户输入 ``requested`` 只参与一次相等比较，不再流入后续路径拼接。
+    try:
+        base = _PATTERNS_DIR.resolve()
+    except (OSError, RuntimeError):
+        return None
+
+    trusted_name: Optional[str] = None
+    for entry in base.glob("*.md"):
+        # entry.stem 来自磁盘扫描，由可信代码构造
+        if entry.is_file() and entry.stem == requested:
+            trusted_name = entry.stem
+            break
+
+    if trusted_name is None:
+        logger.warning("viz_pattern 不在白名单中已拒绝")
+        return None
+
+    # 用可信字符串拼路径（trusted_name 与 viz_pattern 已无数据流关系）
+    candidate = (base / f"{trusted_name}.md").resolve()
+
+    # 兜底防御：必须严格落在 patterns 目录的直接子级
+    if candidate.parent != base:
+        logger.warning("viz_pattern 路径越界已拒绝")
+        return None
+
+    return candidate
+
+
 def _parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
     """
     解析 Markdown frontmatter（--- ... --- 块）。
@@ -150,16 +211,13 @@ def load_pattern_meta(viz_pattern: str) -> dict[str, str]:
     返回包含 name / label / when_to_use / controls 等字段的字典。
     找不到文件或无 frontmatter 时返回 {"name": viz_pattern}。
     """
-    if not viz_pattern or not _PATTERNS_DIR.exists():
-        return {"name": viz_pattern}
-    key = viz_pattern.split("|")[0].strip().lower().replace(" ", "_")
-    candidate = _PATTERNS_DIR / f"{key}.md"
-    if not candidate.exists():
+    candidate = _resolve_pattern_path(viz_pattern)
+    if candidate is None or not candidate.exists():
         return {"name": viz_pattern}
     try:
         text = candidate.read_text(encoding="utf-8")
         meta, _ = _parse_frontmatter(text)
-        meta.setdefault("name", key)
+        meta.setdefault("name", candidate.stem)
         return meta
     except Exception:  # pylint: disable=broad-except
         return {"name": viz_pattern}
@@ -178,13 +236,11 @@ def load_pattern(viz_pattern: str) -> str:
     按 viz_pattern 名称加载对应示例文件的完整内容（含 frontmatter）。
     找不到返回空字符串。
     """
-    if not viz_pattern or not _PATTERNS_DIR.exists():
+    candidate = _resolve_pattern_path(viz_pattern)
+    if candidate is None or not candidate.exists():
         return ""
-    key = viz_pattern.split("|")[0].strip().lower().replace(" ", "_")
-    candidate = _PATTERNS_DIR / f"{key}.md"
-    if candidate.exists():
-        try:
-            return candidate.read_text(encoding="utf-8")
-        except Exception:  # pylint: disable=broad-except
-            pass
-    return ""
+    try:
+        return candidate.read_text(encoding="utf-8")
+    except Exception as e:  # pylint: disable=broad-except
+        logger.error("加载 pattern 文件失败: %s", e)
+        return ""

@@ -5,9 +5,13 @@
   POST /api/immersive/generate            — SSE 流式生成课件（核心接口）
   POST /api/immersive/resume              — 断点续传（恢复生成）
   GET  /api/immersive/exercises/:sid/:cid  — 获取结构化习题数据
+  POST /api/immersive/quiz-result          — 上报答题结果
   POST /api/immersive/complete             — 用户确认完成学习
-  GET  /api/immersive/files/*             — 静态文件服务（PDF/图片/音频）
   GET  /api/immersive/courses             — 列出已生成的课程
+  GET  /api/immersive/suggestions         — 个性化推荐云朵
+
+文件读取统一走 ``/api/documents/{doc_id}/raw|asset/{sub}`` 接口，
+本路由不再提供静态文件服务。
 """
 
 from __future__ import annotations
@@ -17,7 +21,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request, Depends
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from services.immersive import (
@@ -30,6 +34,8 @@ from config import COURSES_DIR
 from dependencies import get_current_user
 from services.quota import QuotaExceededError
 from services.content_guard import get_content_guard
+from utils.validators import SessionIdField, SessionIdPath, sanitize_uuid
+from utils.log_safe import safe_log
 
 logger = logging.getLogger(__name__)
 
@@ -43,43 +49,6 @@ class GenerateRequest(BaseModel):
     user_profile: Optional[str] = ""
     enable_audio: bool = False
     enable_exercises: bool = True
-
-
-# ── 权属校验辅助 ─────────────────────────────────────────────────
-
-
-def _assert_immersive_path_owner(user_id: str, file_path: str) -> None:
-    """
-    校验 user_id 是否拥有对沉浸式课件文件 file_path 的访问权。
-
-    规则：
-      - file_path 是相对于 COURSES_DIR 的路径，形如 `{slug}_{session_id}/...`
-      - 从 sessions 表反查该 user 的 session_id，比对完整 session_id 是否匹配
-      - 不匹配则抛 404（不暴露"不存在 vs 无权限"的差异）
-    """
-    parts = file_path.replace("\\", "/").strip("/").split("/")
-    # 至少需要 {course_slug}/... 一级
-    if len(parts) < 1:
-        raise HTTPException(status_code=404, detail="文件不存在")
-
-    course_slug = parts[0]
-    if "_" not in course_slug:
-        raise HTTPException(status_code=404, detail="文件不存在")
-
-    # 取最后一个 _ 后面的部分作为 session_id（UUID 格式，36 字符）
-    sid_suffix = course_slug.rsplit("_", 1)[-1]
-    if len(sid_suffix) != 36:
-        raise HTTPException(status_code=404, detail="文件不存在")
-
-    from database import get_db
-
-    with get_db() as conn:
-        cur = conn.execute(
-            "SELECT 1 FROM sessions WHERE user_id = ? AND id = ? LIMIT 1",
-            (user_id, sid_suffix),
-        )
-        if cur.fetchone() is None:
-            raise HTTPException(status_code=404, detail="文件不存在")
 
 
 # ── SSE 生成接口 ─────────────────────────────────────────────────
@@ -119,8 +88,6 @@ async def generate_immersive(
                     break
                 yield event
         except QuotaExceededError as e:
-            import json
-
             err = json.dumps(
                 {
                     "type": "error",
@@ -148,7 +115,7 @@ async def generate_immersive(
 
 
 class ResumeRequest(BaseModel):
-    session_id: str
+    session_id: SessionIdField
 
 
 @router.post("/resume")
@@ -162,10 +129,13 @@ async def resume_immersive(
     if not req.session_id.strip():
         raise HTTPException(status_code=400, detail="session_id 不能为空")
 
+    # ── 入口显式净化（SAST sanitizer）──
+    session_id = sanitize_uuid(req.session_id.strip(), field_name="session_id")
+
     async def event_stream():
         try:
             async for event in immersive_resume(
-                session_id=req.session_id.strip(),
+                session_id=session_id,
                 user_id=user_id,
             ):
                 if await request.is_disconnected():
@@ -173,9 +143,7 @@ async def resume_immersive(
                     break
                 yield event
         except QuotaExceededError as e:
-            import json as _json
-
-            err = _json.dumps(
+            err = json.dumps(
                 {
                     "type": "error",
                     "message": str(e),
@@ -203,7 +171,7 @@ async def resume_immersive(
 
 @router.get("/exercises/{session_id}/{chapter_id}")
 async def get_exercises(
-    session_id: str,
+    session_id: SessionIdPath,
     chapter_id: int,
     limit: int = 0,
     user_id: str = Depends(get_current_user),
@@ -213,6 +181,11 @@ async def get_exercises(
     返回已解析的 JSON 题目列表，前端无需自行解析 Markdown。
     ?limit=N 可限制返回题目数量（默认 0 = 全部）。
     """
+    # ── 入口显式净化（SAST sanitizer）──
+    # 通过 uuid.UUID 解析 + str 重格式化，将外部输入替换为可信字符串，
+    # 切断污点（taint）传播链，所有下游调用使用净化后的值。
+    session_id = sanitize_uuid(session_id, field_name="session_id")
+
     try:
         result = get_exercises_for_chapter(
             session_id=session_id,
@@ -222,7 +195,15 @@ async def get_exercises(
         )
         return result
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        # 不向前端暴露异常详情；详细原因仅记到服务端日志
+        logger.warning(
+            "获取习题失败 user=%s session=%s chapter=%s: %s",
+            safe_log(user_id),
+            safe_log(session_id),
+            safe_log(chapter_id),
+            e,
+        )
+        raise HTTPException(status_code=404, detail="习题不存在或不可访问")
 
 
 # ── 习题作答结果上报 ──────────────────────────────────────────
@@ -237,7 +218,7 @@ class QuizAnswerItem(BaseModel):
 
 
 class QuizResultRequest(BaseModel):
-    session_id: str
+    session_id: SessionIdField
     chapter_id: int
     chapter_title: str = ""
     results: list[QuizAnswerItem] = []
@@ -254,26 +235,34 @@ async def submit_quiz_result(
     if not req.results:
         return {"status": "ok", "message": "无答题数据"}
 
+    # ── 入口显式净化（SAST sanitizer）──
+    session_id = sanitize_uuid(req.session_id, field_name="session_id")
+
     try:
         result = await update_profile_from_quiz(
             user_id=user_id,
-            session_id=req.session_id,
+            session_id=session_id,
             chapter_id=req.chapter_id,
             chapter_title=req.chapter_title,
             results=[r.model_dump() for r in req.results],
         )
         return result
-    except Exception as e:
-        logger.warning("习题结果上报处理失败: %s", e)
-        # 不影响用户体验，返回成功但标记处理失败
-        return {"status": "partial", "message": str(e)}
+    except Exception:
+        # 不向前端暴露异常详情；详细堆栈仅记到服务端日志
+        logger.exception(
+            "习题结果上报处理失败 user=%s session=%s chapter=%s",
+            safe_log(user_id),
+            safe_log(session_id),
+            safe_log(req.chapter_id),
+        )
+        return {"status": "partial", "message": "处理失败，请稍后重试"}
 
 
 # ── 用户确认完成 ──────────────────────────────────────────────
 
 
 class CompleteRequest(BaseModel):
-    session_id: str
+    session_id: SessionIdField
     feedback: Optional[str] = ""
 
 
@@ -286,63 +275,25 @@ async def complete_session(
 
     生成流程结束后 session 仍为 active，只有用户确认后才标记 completed。
     """
+    # ── 入口显式净化（SAST sanitizer）──
+    session_id = sanitize_uuid(req.session_id, field_name="session_id")
+
     try:
         result = complete_immersive_session(
-            session_id=req.session_id,
+            session_id=session_id,
             user_id=user_id,
             feedback=req.feedback or "",
         )
         return result
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-# ── 文件服务 ─────────────────────────────────────────────────────
-
-
-@router.api_route("/files/{file_path:path}", methods=["GET", "HEAD"])
-async def serve_file(
-    file_path: str,
-    user_id: str = Depends(get_current_user),
-):
-    """
-    提供沉浸式课件的静态文件（PDF/图片/音频/练习题/讲解稿等）。
-
-    鉴权：要求 Authorization: Bearer <token>；
-         前端通过 pdfjs httpHeaders 或 fetch→blob 的方式携带（见 frontend/src/api/base.js）。
-    权属：路径必须位于 COURSES_DIR 下，且 course 所属 session 必须属于当前用户。
-    """
-    full_path = (COURSES_DIR / file_path).resolve()
-
-    # 安全检查：不能访问 COURSES_DIR 之外的文件
-    if not str(full_path).startswith(str(COURSES_DIR)):
-        raise HTTPException(status_code=403, detail="路径不允许")
-
-    if not full_path.exists() or not full_path.is_file():
-        raise HTTPException(status_code=404, detail="文件不存在")
-
-    # 权属校验：通过 course_slug 末尾的完整 session_id 反查归属
-    _assert_immersive_path_owner(user_id, file_path)
-
-    # 根据后缀推断 MIME type
-    suffix = full_path.suffix.lower()
-    media_types = {
-        ".pdf": "application/pdf",
-        ".png": "image/png",
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".webp": "image/webp",
-        ".wav": "audio/wav",
-        ".mp3": "audio/mpeg",
-        ".md": "text/markdown; charset=utf-8",
-        ".json": "application/json; charset=utf-8",
-        ".tex": "text/plain; charset=utf-8",
-    }
-
-    return FileResponse(
-        path=full_path,
-        media_type=media_types.get(suffix, "application/octet-stream"),
-    )
+        # 不向前端暴露异常详情；详细原因仅记到服务端日志
+        logger.warning(
+            "确认完成会话失败 user=%s session=%s: %s",
+            safe_log(user_id),
+            safe_log(session_id),
+            e,
+        )
+        raise HTTPException(status_code=400, detail="请求参数不合法或会话状态异常")
 
 
 # ── 课程列表 ─────────────────────────────────────────────────────
@@ -362,8 +313,6 @@ async def list_courses(
     if not courses_dir.exists():
         return {"courses": []}
 
-    # 查该用户全部 session_id（沉浸式 session 也存在 sessions 表中，
-    # 见 services/immersive/persistence.py::create_session）
     from database import get_db
 
     user_sids: set[str] = set()
@@ -378,7 +327,6 @@ async def list_courses(
     for d in sorted(courses_dir.iterdir()):
         if not d.is_dir():
             continue
-        # course_slug 形如 "{slug}_{session_id}"，取最后一个 _ 后的部分为 session_id
         name = d.name
         if "_" not in name:
             continue
@@ -394,7 +342,6 @@ async def list_courses(
             except Exception:  # pylint: disable=broad-except
                 pass
 
-        # 统计已完成章节数
         chapter_dirs = sorted(
             [c for c in d.iterdir() if c.is_dir() and c.name.startswith("chapter_")]
         )
@@ -427,19 +374,7 @@ async def list_courses(
 async def get_suggestions(
     user_id: str = Depends(get_current_user),
 ):
-    """根据用户画像和学习历史，调用 LLM 生成个性化推荐主题云朵。
-
-    返回格式：
-    {
-        "suggestions": [
-            {"text": "主题名", "emoji": "🔥", "size": "md", "reason": "推荐理由"},
-            ...
-        ],
-        "source": "personalized" | "default"
-    }
-
-    如果画像为空或 LLM 调用失败，返回 source="default"，前端使用默认静态标签。
-    """
+    """根据用户画像和学习历史，调用 LLM 生成个性化推荐主题云朵。"""
     from services.immersive.suggestions import generate_suggestions
 
     try:

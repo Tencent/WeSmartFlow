@@ -321,6 +321,18 @@ function handleMessage(event) {
 
 // ── 注入脚本：尺寸上报 + 选中文本上报 ───────────────────────────
 function injectResizeScript(html) {
+  const style = `
+<style id="html-card-adaptive-image-style">
+  img,
+  .card-image {
+    max-width: 100% !important;
+    height: auto !important;
+    max-height: none !important;
+    object-fit: contain !important;
+    object-position: center center !important;
+  }
+  .card-image { width: 100% !important; }
+</style>`;
   const scriptOpen = "<" + "script>";
   const scriptClose = "<" + "/script>";
   const script = `
@@ -332,10 +344,20 @@ ${scriptOpen}
     var h = document.documentElement.scrollHeight || document.body.scrollHeight;
     window.parent.postMessage({ type: 'resize', width: w, height: h }, '*');
   }
-  window.addEventListener('load', function() { setTimeout(report, 300); });
+  function normalizeImages() {
+    Array.prototype.forEach.call(document.images || [], function(img) {
+      img.style.maxWidth = '100%';
+      img.style.height = 'auto';
+      img.style.maxHeight = 'none';
+      img.style.objectFit = 'contain';
+      img.style.objectPosition = 'center center';
+      img.addEventListener('load', function() { setTimeout(report, 50); }, { once: true });
+    });
+  }
+  window.addEventListener('load', function() { normalizeImages(); setTimeout(report, 300); });
   window.addEventListener('message', function(e) { if (e.data?.type === 'requestResize') report(); });
   var t;
-  new MutationObserver(function() { clearTimeout(t); t = setTimeout(report, 200); })
+  new MutationObserver(function() { normalizeImages(); clearTimeout(t); t = setTimeout(report, 200); })
     .observe(document.body, { childList: true, subtree: true, attributes: true });
 
   // 选中文本上报
@@ -365,6 +387,11 @@ ${scriptOpen}
   });
 })();
 ${scriptClose}`;
+  if (html.includes("</head>")) {
+    html = html.replace("</head>", style + "</head>");
+  } else {
+    html = style + html;
+  }
   if (html.includes("</body>"))
     return html.replace("</body>", script + "</body>");
   return html + script;
@@ -379,15 +406,17 @@ async function load() {
 
   try {
     const { api } = await import("../../api/base.js");
-    const res = await api.getRaw(`/files/cards/${props.fileId}`);
+    const res = await api.getRaw(`/api/documents/${props.fileId}/raw`);
     if (!res.ok) throw new Error(`加载失败 (${res.status})`);
     let html = await res.text();
 
+    // 内嵌图片序列化为 dataURL，避免 iframe 子资源丢鉴权。
+    // 后端生成的文件中图片 src 的格式为 /api/documents/{docId}/asset/images/xxx.{png|jpg|jpeg|webp}。
     const imgPaths = [
       ...new Set(
         [
           ...html.matchAll(
-            /src="(\/files\/cards\/[^"]+\.(png|jpg|jpeg|webp))"/gi,
+            /src="(\/api\/documents\/[^"]+\/asset\/[^"]+\.(png|jpg|jpeg|webp))"/gi,
           ),
         ].map((m) => m[1]),
       ),

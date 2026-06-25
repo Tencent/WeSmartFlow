@@ -20,7 +20,11 @@ from models.session import (
     SessionFile,
     CanvasBlock,
 )
+from utils.validators import ensure_session_id
 from .base import BaseRepository, _loads, _dumps, new_id, utcnow_str
+
+# 解析一次基目录，避免每次拼路径都做磁盘解析
+_SESSIONS_DIR_RESOLVED = SESSIONS_DIR.resolve()
 
 
 def _row_to_schema(row: dict) -> SessionSchema:
@@ -239,14 +243,28 @@ class SessionRepository(BaseRepository):
         }
 
     @staticmethod
+    def _safe_session_file(session_id: str, suffix: str) -> Path:
+        """安全地基于 ``session_id`` 拼出位于 ``SESSIONS_DIR`` 内的文件路径。
+
+        防御链：
+        1. ``ensure_session_id`` 限制 ``session_id`` 必须是 UUID（非法直接 400）
+        2. ``resolve()`` 后比较父目录，确保最终路径不会越过 ``SESSIONS_DIR``
+        """
+        ensure_session_id(session_id)
+        target = (_SESSIONS_DIR_RESOLVED / f"{session_id}{suffix}").resolve()
+        if target.parent != _SESSIONS_DIR_RESOLVED:
+            raise ValueError("非法 session_id：路径越界")
+        return target
+
+    @staticmethod
     def _messages_path(session_id: str) -> Path:
         """根据 session_id 直接构造消息文件的绝对路径"""
-        return SESSIONS_DIR / f"{session_id}.json"
+        return SessionRepository._safe_session_file(session_id, ".json")
 
     @staticmethod
     def _workspace_path(session_id: str) -> Path:
         """根据 session_id 构造沉浸式 workspace 文件路径。"""
-        return SESSIONS_DIR / f"{session_id}.workspace.json"
+        return SessionRepository._safe_session_file(session_id, ".workspace.json")
 
     def _read_workspace(self, session_id: str) -> dict:
         path = self._workspace_path(session_id)

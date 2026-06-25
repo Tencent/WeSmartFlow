@@ -1132,7 +1132,12 @@
 import { ref, computed, nextTick, onMounted, onUnmounted, watch } from "vue";
 import { useRoute, onBeforeRouteLeave } from "vue-router";
 import { sessionApi, BASE_URL, llmApi } from "@/api";
-import { authHeaders, fetchAsBlobUrl } from "@/api/base.js";
+import {
+  authHeaders,
+  fetchAsBlobUrl,
+  docRawUrl,
+  docAssetUrl,
+} from "@/api/base.js";
 import { api } from "@/api/base.js";
 import { renderMd } from "@/composables/useMarkdown.js";
 import HtmlCard from "@/components/HtmlCard/HtmlCard.vue";
@@ -1424,29 +1429,39 @@ const imCurrentAudioUrl = computed(() => {
   const ch = imCurrentChapter.value;
   if (!ch?.audio_files?.length) return "";
   const pageIdx = imCurrentPage.value - 1;
-  return getAudioUrl(ch.audio_files, ch.pdf_path, pageIdx);
+  return getAudioUrl(ch.audio_files, pageIdx, ch.audio_doc_id || "");
 });
 
-function getAudioUrl(audioFiles = [], pdfPath = "", pageIdx = 0) {
+function getAudioUrl(audioFiles = [], pageIdx = 0, audioDocId = "") {
   const af = audioFiles[pageIdx];
   if (!af || !af.success) return "";
-  if (af.url) return `${BASE_URL}${af.url}`;
-  const audioDir = pdfPath?.replace(/[^/]+\.pdf$/, "") || "";
-  return `${BASE_URL}/api/immersive/files/${audioDir}${af.filename}`;
+  // 后端会在 audio_files 里返回完整 url（包括 /api/documents/{audio_doc_id}/asset/...）
+  if (af.url) {
+    return af.url.startsWith("http") ? af.url : `${BASE_URL}${af.url}`;
+  }
+  // 其次选：探底 audioDocId（例如服务重启后仅能从 chapter 属性拿到 audio_doc_id）
+  if (audioDocId && af.filename) {
+    return docAssetUrl(audioDocId, af.filename);
+  }
+  return "";
 }
 
 function pdfBlockAudioUrl(block) {
   const state = pdfBlockStates.value[block.id] || {};
   const pageIdx = (state.currentPage || 1) - 1;
   const audioFiles = block?.data?.audio_files || [];
-  const pdfPath = block?.data?.pdf_path || "";
-  if (audioFiles.length) return getAudioUrl(audioFiles, pdfPath, pageIdx);
+  const audioDocId = block?.data?.audio_doc_id || "";
+  if (audioFiles.length) {
+    const url = getAudioUrl(audioFiles, pageIdx, audioDocId);
+    if (url) return url;
+  }
   const ch = imChapters.value.find(
     (item) => item.chapter_id === block.chapter_id,
   );
-  return ch?.audio_files?.length
-    ? getAudioUrl(ch.audio_files, ch.pdf_path, pageIdx)
-    : "";
+  if (ch?.audio_files?.length) {
+    return getAudioUrl(ch.audio_files, pageIdx, ch.audio_doc_id || "");
+  }
+  return "";
 }
 
 // ── 工具函数 ─────────────────────────────────────────────────────
@@ -1535,12 +1550,11 @@ function upsertCanvasBlock(block) {
 
 async function hydrateQuizBlock(blockId) {
   const block = canvasBlocks.value.find((b) => b.id === blockId);
-  if (!block || block.data?.questions?.length || !block.data?.exercises_path)
-    return;
+  if (!block || block.data?.questions?.length) return;
+  const docId = block.data?.doc_id || block.data?.exercises_doc_id;
+  if (!docId) return;
   try {
-    const res = await api.getRaw(
-      `/api/immersive/files/${block.data.exercises_path}`,
-    );
+    const res = await api.getRaw(`/api/documents/${docId}/raw`);
     const md = await res.text();
     let questions = parseExercises(md);
     // 难度排序兜底（easy → medium → hard）
@@ -1766,18 +1780,16 @@ async function initPdfBlock(blockId) {
 
   const block = canvasBlocks.value.find((b) => b.id === blockId);
   if (!block) return;
-  const path =
-    block?.data?.pdf_path ||
-    block?.data?.url?.replace(/^\/api\/immersive\/files\//, "");
-  if (!path) return;
+  const docId = block?.data?.doc_id;
+  if (!docId) return;
   try {
     pdfBlockStates.value[blockId] = {
       ...(pdfBlockStates.value[blockId] || {}),
       loading: true,
       error: "",
-      path,
+      docId,
     };
-    const pdfUrl = `${BASE_URL}/api/immersive/files/${path}`;
+    const pdfUrl = docRawUrl(docId);
     console.log("[PDF] 开始加载:", pdfUrl);
     const headRes = await fetch(pdfUrl, {
       method: "HEAD",
@@ -1804,7 +1816,7 @@ async function initPdfBlock(blockId) {
       totalPages: doc.numPages,
       loading: false,
       error: "",
-      path,
+      docId,
     };
     await nextTick();
     await renderPdfMainPage(blockId, 1);
@@ -1820,7 +1832,7 @@ async function initPdfBlock(blockId) {
       loading: false,
       totalPages: 0,
       error: `PDF 加载失败：${message}`,
-      path,
+      docId,
     };
     imAddLog(`PDF 加载失败: ${message}`, "error");
   }
@@ -1968,12 +1980,10 @@ async function pdfBlockGotoPage(blockId, pageNum) {
 }
 
 async function openPdfBlock(block) {
-  const path =
-    block?.data?.pdf_path ||
-    block?.data?.url?.replace(/^\/api\/immersive\/files\//, "");
-  if (!path) return;
+  const docId = block?.data?.doc_id;
+  if (!docId) return;
   try {
-    const blobUrl = await fetchAsBlobUrl(`/api/immersive/files/${path}`);
+    const blobUrl = await fetchAsBlobUrl(`/api/documents/${docId}/raw`);
     window.open(blobUrl, "_blank", "noopener,noreferrer");
   } catch (e) {
     imAddLog(`PDF 打开失败: ${e.message}`, "error");
@@ -2053,12 +2063,16 @@ function applyWorkspacePayload(payload = {}) {
         return {
           chapter_id: ch.chapter_id,
           title: ch.title,
-          pdf_exists: !!pdfPath,
+          pdf_exists: !!pdfPath || !!ch.pdf_doc_id,
           pdf_path: pdfPath,
-          exercises_exists: !!exPath,
+          pdf_doc_id: ch.pdf_doc_id || "",
+          exercises_exists: !!exPath || !!ch.exercises_doc_id,
           exercises_path: exPath,
+          exercises_doc_id: ch.exercises_doc_id || "",
           audio_enabled: !!ch.audio_enabled,
           audio_files: Array.isArray(ch.audio_files) ? ch.audio_files : [],
+          audio_doc_id: ch.audio_doc_id || "",
+          notes_doc_id: ch.notes_doc_id || "",
           speaker_notes_count: ch.speaker_notes_count || 0,
         };
       });
@@ -2284,11 +2298,11 @@ async function imSelectChapter(idx) {
   imQuizSubmitted.value = false;
   imQuizAdvice.value = "";
   const ch = imChapters.value[idx];
-  if (!ch?.pdf_exists || !ch.pdf_path) return;
-  if (ch.exercises_exists && ch.exercises_path) {
+  if (!ch?.pdf_doc_id) return;
+  if (ch.exercises_doc_id) {
     try {
       const exRes = await api.getRaw(
-        `/api/immersive/files/${ch.exercises_path}`,
+        `/api/documents/${ch.exercises_doc_id}/raw`,
       );
       const md = await exRes.text();
       imExercisesHtml.value = renderMd(md);
@@ -2301,7 +2315,7 @@ async function imSelectChapter(idx) {
     imExercisesHtml.value = "";
     imParsedQuizzes.value = [];
   }
-  const pdfUrl = `${BASE_URL}/api/immersive/files/${ch.pdf_path}`;
+  const pdfUrl = docRawUrl(ch.pdf_doc_id);
   if (!imPdfDocMap.has(pdfUrl)) {
     try {
       const headRes = await fetch(pdfUrl, {
@@ -2385,8 +2399,8 @@ async function imRenderPage(doc, pageNum) {
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function imGotoPage(num) {
   const ch = imChapters.value[imCurrentChapterIndex.value];
-  if (!ch?.pdf_path) return;
-  const pdfUrl = `${BASE_URL}/api/immersive/files/${ch.pdf_path}`;
+  if (!ch?.pdf_doc_id) return;
+  const pdfUrl = docRawUrl(ch.pdf_doc_id);
   let doc = imPdfDocMap.get(pdfUrl);
   if (!doc) {
     try {
@@ -3153,17 +3167,23 @@ onMounted(async () => {
         imAddLog(`已恢复 ${canvasBlocks.value.length} 个学习内容块`, "success");
       }
       try {
-        const courseSlug =
-          (currentTopic.value || "")
-            .replace(/[^a-zA-Z0-9\u4e00-\u9fff]+/g, "_")
-            .replace(/^_|_$/g, "")
-            .slice(0, 60) || "untitled";
-        const courseDirName = `${courseSlug}_${currentSessionId.value}`;
-        const outlineRes = await api.getRaw(
-          `/api/immersive/files/${encodeURIComponent(courseDirName)}/outline.json`,
+        // 从 canvas_blocks 里的 outline block 拿 doc_id 拉大纲
+        const outlineBlock = canvasBlocks.value.find(
+          (b) => b.type === "outline" && b?.data?.doc_id,
         );
-        if (outlineRes.ok) {
-          imOutline.value = await outlineRes.json();
+        if (outlineBlock?.data?.doc_id) {
+          const outlineRes = await api.getRaw(
+            `/api/documents/${outlineBlock.data.doc_id}/raw`,
+          );
+          if (outlineRes.ok) {
+            imOutline.value = await outlineRes.json();
+            imAddLog(
+              `大纲已加载，共 ${imOutline.value?.chapters?.length || 0} 章`,
+            );
+          }
+        } else if (outlineBlock?.data?.outline) {
+          // outline 原始数据已随 canvas_block 下发
+          imOutline.value = outlineBlock.data.outline;
           imAddLog(
             `大纲已加载，共 ${imOutline.value?.chapters?.length || 0} 章`,
           );
@@ -3172,69 +3192,9 @@ onMounted(async () => {
         console.error("加载大纲失败", ex);
       }
       if (detail.files && detail.files.length > 0) {
+        // ── 恢复历史卡片（html_card / viz / quiz 类型文件）到 canvasBlocks ──
         for (const f of detail.files) {
-          if (
-            f.file_type === "pdf" &&
-            f.file_id &&
-            f.file_id.includes("/chapter_")
-          ) {
-            const filePath = f.file_id;
-            // ✅ 从路径里解析真实章号，而不是用"出现顺序"猜（之前会把
-            // chapter_01 目录拼上 chapter_02_exercises.md 导致 404）
-            const chMatch = filePath.match(/\/chapter_(\d+)\//);
-            if (!chMatch) continue;
-            const chId = parseInt(chMatch[1], 10);
-            // 同一章节出现多次（例如多次归档登记）时只保留一份
-            if (imChapters.value.some((c) => c.chapter_id === chId)) continue;
-            const chapterDir = filePath.replace(/\/[^/]+\.pdf$/, "");
-            const exPath = `${chapterDir}/chapter_${String(chId).padStart(2, "0")}_exercises.md`;
-            let hasExercises = false;
-            try {
-              const exRes = await api.getRaw(`/api/immersive/files/${exPath}`);
-              hasExercises = exRes.ok;
-            } catch {
-              /* ignore */
-            }
-            const notesPath = `${chapterDir}/speaker_notes.json`;
-            let audioFiles = [];
-            try {
-              const notesRes = await api.getRaw(
-                `/api/immersive/files/${notesPath}`,
-              );
-              if (notesRes.ok) {
-                const notes = await notesRes.json();
-                if (Array.isArray(notes))
-                  audioFiles = notes.map((_, i) => ({
-                    filename: `frame_${String(i + 1).padStart(3, "0")}.wav`,
-                    success: true,
-                  }));
-              }
-            } catch {
-              /* ignore */
-            }
-            imChapters.value.push({
-              chapter_id: chId,
-              title: f.title || `第${chId}章`,
-              pdf_exists: true,
-              pdf_path: filePath,
-              exercises_exists: hasExercises,
-              exercises_path: hasExercises ? exPath : "",
-              speaker_notes_count: audioFiles.length,
-              audio_files: audioFiles,
-              images: [],
-            });
-          }
-        }
-        // 按真实章号升序，避免 documents 表里登记顺序乱掉时章节顺序错位
-        imChapters.value.sort((a, b) => a.chapter_id - b.chapter_id);
-        if (imChapters.value.length > 0) {
-          await nextTick();
-          await nextTick();
-          imSelectChapter(0);
-        }
-        // ── 恢复历史卡片（html / viz / quiz 类型文件）到 canvasBlocks ──
-        for (const f of detail.files) {
-          if (f.file_type === "html" && f.file_id) {
+          if (f.file_type === "html_card" && f.file_id) {
             upsertCanvasBlock({
               id: `card_${f.file_id}`,
               type: "knowledge_card",
@@ -3261,6 +3221,12 @@ onMounted(async () => {
               data: { quizId: f.file_id },
             });
           }
+        }
+        // ── 选中第一章 PDF（workspace.chapters 已装载到 imChapters）──
+        if (imChapters.value.length > 0) {
+          await nextTick();
+          await nextTick();
+          imSelectChapter(0);
         }
       }
       imAddLog(
@@ -3346,8 +3312,8 @@ onMounted(async () => {
 
 function onWindowResize() {
   const ch = imChapters.value[imCurrentChapterIndex.value];
-  if (ch?.pdf_path) {
-    const pdfUrl = `${BASE_URL}/api/immersive/files/${ch.pdf_path}`;
+  if (ch?.pdf_doc_id) {
+    const pdfUrl = docRawUrl(ch.pdf_doc_id);
     const doc = imPdfDocMap.get(pdfUrl);
     if (doc) imRenderPage(doc, imCurrentPage.value);
   }

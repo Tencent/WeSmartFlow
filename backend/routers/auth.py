@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 from database import get_db, ensure_user_settings
 from dependencies import create_access_token
+from utils.log_safe import safe_log
 from config import (
     SMTP_HOST,
     SMTP_PORT,
@@ -118,7 +119,8 @@ def _send_email(to_email: str, code: str) -> None:
                 server.starttls()
                 server.login(SMTP_USER, SMTP_PASSWORD)
                 server.send_message(msg)
-        logger.info("验证码邮件已发送至 %s", to_email)
+        # 避免日志注入（CWE-117）
+        logger.info("验证码邮件已发送至 %s", safe_log(to_email))
     except smtplib.SMTPAuthenticationError:
         logger.error("SMTP 认证失败，请检查 SMTP_USER 和 SMTP_PASSWORD 配置")
         raise HTTPException(
@@ -294,7 +296,8 @@ def verify_code(body: VerifyCodeRequest):
 
         # 初始化 settings
         ensure_user_settings(user_id)
-        logger.info("邮箱 %s 自动注册为用户 %s", email, user_id)
+        # 避免日志注入（CWE-117）
+        logger.info("邮箱 %s 自动注册为用户 %s", safe_log(email), safe_log(user_id))
 
     # 签发 token
     token = create_access_token(user_id=user_id)

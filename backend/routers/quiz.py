@@ -1,10 +1,13 @@
 """测验（Quiz）路由：生成测验、提交答案。"""
 
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from dependencies import get_current_user
 from models.quiz import QuizSubmit
 from services import QuizService
+from utils.validators import is_valid_session_id
 
 router = APIRouter(prefix="/api/quiz", tags=["quiz"])
 
@@ -13,9 +16,11 @@ router = APIRouter(prefix="/api/quiz", tags=["quiz"])
 async def generate_quiz(
     node_id: str,
     quiz_type: str = "multiple_choice",
-    session_id: str = None,
+    session_id: Optional[str] = None,
     user_id: str = Depends(get_current_user),
 ):
+    if session_id is not None and not is_valid_session_id(session_id):
+        raise HTTPException(status_code=400, detail="非法 session_id")
     try:
         return await QuizService().generate_quiz(
             user_id, node_id, session_id, quiz_type

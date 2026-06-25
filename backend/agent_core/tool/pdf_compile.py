@@ -206,11 +206,11 @@ class LatexPdfCompileTool(BaseTool):
 
     def run(
         self,
-        tex_path: str,
+        tex_path: str = "",
         engine: str = "auto",
         timeout: int = 240,
         runs: int = 1,
-        **_: Any,
+        **kwargs: Any,
     ) -> str:
         tex = Path(tex_path).expanduser().resolve()
         if not tex.exists():

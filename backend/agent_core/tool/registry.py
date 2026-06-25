@@ -15,6 +15,7 @@ import json
 import logging
 from typing import Any, Dict, List, Optional
 
+from ..agent.events import AgentToolResultEvent, AgentToolRunEvent
 from .base import BaseTool
 
 logger = logging.getLogger(__name__)
@@ -153,8 +154,6 @@ class ToolRegistry:
         Yields:
             AgentToolRunEvent | AgentToolResultEvent
         """
-        from ..agent.base import AgentToolRunEvent, AgentToolResultEvent
-
         tool = self._tools.get(name)
         if not tool:
             yield AgentToolResultEvent(

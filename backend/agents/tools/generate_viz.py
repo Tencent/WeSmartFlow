@@ -27,6 +27,7 @@ from agent_core.tool.base import BaseTool
 from config import VIZ_DIR
 from repositories.document_repo import DocumentRepository
 from services.llm_factory import get_llm
+from utils.log_safe import safe_log
 
 from .validate_viz_code import ValidateVizCodeTool
 from .viz_registry import list_patterns_with_meta, load_pattern
@@ -508,18 +509,18 @@ class GenerateInteractiveVizTool(BaseTool):
 
     def run(
         self,
-        title: str,
-        concept: str,
+        title: str = "",
+        concept: str = "",
         interaction_hint: str = "",
         node_ids: list = None,
-        **_,
+        **kwargs,
     ) -> str:
         viz_id = str(uuid.uuid4())
         llm = get_llm(self.user_id)
         core_doc = _load_core_doc()
 
         # ── 阶段一：Design 循环 ──────────────────────────────────────────
-        logger.info("[GenerateViz] 开始 Design 循环: title=%s", title)
+        logger.info("[GenerateViz] 开始 Design 循环: title=%s", safe_log(title))
         try:
             spec = _design_viz(llm, title, concept, interaction_hint)
         except Exception as e:  # pylint: disable=broad-except
@@ -528,7 +529,7 @@ class GenerateInteractiveVizTool(BaseTool):
 
         logger.info(
             "[GenerateViz] VizSpec 设计完成: %s",
-            json.dumps(spec, ensure_ascii=False)[:200],
+            safe_log(json.dumps(spec, ensure_ascii=False)[:200]),
         )
 
         # ── 阶段二：Code 循环 ────────────────────────────────────────────
@@ -536,7 +537,7 @@ class GenerateInteractiveVizTool(BaseTool):
         pattern_example = load_pattern(spec.get("viz_pattern", ""))
         logger.info(
             "[GenerateViz] 开始 Code 循环, viz_pattern=%s",
-            spec.get("viz_pattern", "unknown"),
+            safe_log(spec.get("viz_pattern", "unknown")),
         )
         with tempfile.TemporaryDirectory(prefix=f"viz_{viz_id}_") as _tmp:
             work_dir = Path(_tmp)
@@ -581,7 +582,9 @@ class GenerateInteractiveVizTool(BaseTool):
                 node_ids=node_ids or [],
             )
 
-            logger.info("[GenerateViz] 生成成功: viz_id=%s, title=%s", viz_id, title)
+            logger.info(
+                "[GenerateViz] 生成成功: viz_id=%s, title=%s", viz_id, safe_log(title)
+            )
             return viz_id
 
     def _create_document_record(
@@ -598,23 +601,18 @@ class GenerateInteractiveVizTool(BaseTool):
             logger.warning("GenerateInteractiveVizTool 缺少 user_id，跳过文档登记")
             return
         try:
-            file_size = viz_file.stat().st_size if viz_file.exists() else 0
-            storage_key = f"documents/viz/{viz_id}/viz.js"
             generation_prompt = concept
             if interaction_hint:
                 generation_prompt += f"\n\n[交互形式]\n{interaction_hint}"
 
-            doc_repo = DocumentRepository()
-            doc = doc_repo.create_generated(
+            doc = DocumentRepository().register_produced(
                 doc_id=viz_id,
                 user_id=self.user_id,
                 title=title,
-                file_name="viz.js",
-                storage_key=storage_key,
+                file_path=viz_file,
                 file_type="viz",
-                file_size=file_size,
-                generation_prompt=generation_prompt,
                 session_id=self.session_id,
+                generation_prompt=generation_prompt,
                 node_ids=node_ids,
             )
             logger.info("可视化文档记录创建成功: %s", doc.id)

@@ -100,8 +100,8 @@ async def quick_ask(
                     # 流结束
                     done_data = json.dumps({"type": "done"}, ensure_ascii=False)
                     yield f"data: {done_data}\n\n"
-        except asyncio.CancelledError:
-            pass
+        except asyncio.CancelledError as e:
+            logger.warning("quick-ask 被取消: %s", e)
         except Exception as e:
             logger.error("quick-ask 出错: %s", e)
             err = json.dumps({"type": "error", "message": str(e)}, ensure_ascii=False)

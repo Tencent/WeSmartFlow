@@ -10,10 +10,10 @@
 
 from __future__ import annotations
 
-import html
 import json
 import os
 import re
+from html.parser import HTMLParser
 from typing import Any, Optional
 from urllib.parse import urlparse
 
@@ -30,13 +30,216 @@ load_dotenv()
 USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7_2) AppleWebKit/537.36"
 MAX_REDIRECTS = 5
 
+# 不输出文本内容的标签（脚本 / 样式 / 元数据）
+_SKIP_TAGS = frozenset(
+    {"script", "style", "noscript", "template", "head", "meta", "link"}
+)
+# 块级标签：闭合时补换行
+_BLOCK_TAGS = frozenset(
+    {
+        "p",
+        "div",
+        "section",
+        "article",
+        "header",
+        "footer",
+        "main",
+        "aside",
+        "ul",
+        "ol",
+        "table",
+        "tr",
+        "blockquote",
+        "pre",
+    }
+)
+
+
+class _TextExtractor(HTMLParser):
+    """基于 html.parser 的纯文本提取器。
+
+    使用真正的 HTML 解析器替代正则，避免 ``bad HTML filtering regexp``：
+    - 自动处理畸形标签、嵌套、注释、CDATA；
+    - 自动解码 HTML 实体（不再需要 ``html.unescape``）；
+    - 通过 ``_skip_depth`` 计数正确剥离 ``<script>``/``<style>`` 等内嵌内容。
+    """
+
+    def __init__(self) -> None:
+        # convert_charrefs=True：自动把 &amp; / &#x2F; 等还原为字符
+        super().__init__(convert_charrefs=True)
+        self._parts: list[str] = []
+        self._skip_depth = 0  # 进入 script/style 等标签后 +1，离开 -1
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, Optional[str]]]) -> None:
+        if tag in _SKIP_TAGS:
+            self._skip_depth += 1
+            return
+        if tag == "br":
+            self._parts.append("\n")
+        elif tag in _BLOCK_TAGS or tag in ("h1", "h2", "h3", "h4", "h5", "h6", "li"):
+            # 块级元素前补一个换行，避免相邻块级文字粘连
+            if self._parts and not self._parts[-1].endswith("\n"):
+                self._parts.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in _SKIP_TAGS:
+            if self._skip_depth > 0:
+                self._skip_depth -= 1
+            return
+        if tag in _BLOCK_TAGS or tag in ("h1", "h2", "h3", "h4", "h5", "h6", "li"):
+            self._parts.append("\n")
+
+    def handle_startendtag(
+        self, tag: str, attrs: list[tuple[str, Optional[str]]]
+    ) -> None:
+        if tag == "br":
+            self._parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        if self._skip_depth == 0 and data:
+            self._parts.append(data)
+
+    def get_text(self) -> str:
+        return "".join(self._parts)
+
+
+class _MarkdownExtractor(HTMLParser):
+    """基于 html.parser 的 Markdown 提取器。
+
+    支持的转换：
+    - <a href=...>text</a>  → [text](href)
+    - <h1>..</h1> ~ <h6>..</h6> → # .. ###### ..
+    - <li>..</li>           → - ..
+    - <p>/<div>/<section>/<article> 块级元素 → 段落分隔
+    - <br>/<hr>             → 换行
+    其余标签会被剥离，文本内容保留。
+    """
+
+    _HEADING_TAGS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
+    _PARAGRAPH_TAGS = frozenset({"p", "div", "section", "article"})
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._parts: list[str] = []
+        self._skip_depth = 0
+        # 标签栈：用于在 endtag 时知道当前是不是 a / h*
+        self._stack: list[dict[str, Any]] = []
+
+    # ── 工具：当前是否在 skip 区或在收集子文本（如 <a> 内部）──
+    def _in_collect(self) -> bool:
+        return any(item.get("collect") for item in self._stack)
+
+    def _append_text(self, text: str) -> None:
+        if not text:
+            return
+        if self._stack and self._stack[-1].get("collect") is not None:
+            # 收集到栈顶 entry 里
+            self._stack[-1]["collect"].append(text)
+        else:
+            self._parts.append(text)
+
+    # ── HTMLParser 钩子 ──
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, Optional[str]]]) -> None:
+        if tag in _SKIP_TAGS:
+            self._skip_depth += 1
+            return
+        if self._skip_depth > 0:
+            return
+
+        attrs_dict = {k: v for k, v in attrs if v is not None}
+
+        if tag == "a":
+            self._stack.append(
+                {"tag": "a", "href": attrs_dict.get("href", ""), "collect": []}
+            )
+            return
+        if tag in self._HEADING_TAGS:
+            self._parts.append("\n")
+            self._stack.append({"tag": tag, "level": int(tag[1]), "collect": []})
+            self._parts.append("#" * int(tag[1]) + " ")
+            return
+        if tag == "li":
+            self._parts.append("\n- ")
+            self._stack.append({"tag": "li"})
+            return
+        if tag == "br":
+            self._append_text("\n")
+            return
+        if tag == "hr":
+            self._parts.append("\n")
+            return
+        if tag in self._PARAGRAPH_TAGS:
+            self._parts.append("\n\n")
+            self._stack.append({"tag": tag})
+            return
+
+        # 其他标签仅入栈占位，不输出
+        self._stack.append({"tag": tag})
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in _SKIP_TAGS:
+            if self._skip_depth > 0:
+                self._skip_depth -= 1
+            return
+        if self._skip_depth > 0:
+            return
+
+        # 弹出最近的同名标签（容错：若不匹配则忽略）
+        idx = None
+        for i in range(len(self._stack) - 1, -1, -1):
+            if self._stack[i].get("tag") == tag:
+                idx = i
+                break
+        if idx is None:
+            return
+        entry = self._stack.pop(idx)
+
+        if tag == "a":
+            inner = "".join(entry.get("collect") or []).strip()
+            href = entry.get("href", "")
+            if href and inner:
+                self._parts.append(f"[{inner}]({href})")
+            else:
+                self._parts.append(inner)
+            return
+        if tag in self._HEADING_TAGS:
+            inner = "".join(entry.get("collect") or []).strip()
+            self._parts.append(inner + "\n")
+            return
+        if tag == "li":
+            self._parts.append("\n")
+            return
+        if tag in self._PARAGRAPH_TAGS:
+            self._parts.append("\n\n")
+            return
+
+    def handle_startendtag(
+        self, tag: str, attrs: list[tuple[str, Optional[str]]]
+    ) -> None:
+        if tag == "br":
+            self._append_text("\n")
+        elif tag == "hr":
+            self._parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        if self._skip_depth > 0 or not data:
+            return
+        self._append_text(data)
+
+    def get_markdown(self) -> str:
+        return "".join(self._parts)
+
 
 def _strip_tags(text: str) -> str:
-    """移除 HTML 标签并解码实体。"""
-    text = re.sub(r"<script[\s\S]*?</script>", "", text, flags=re.I)
-    text = re.sub(r"<style[\s\S]*?</style>", "", text, flags=re.I)
-    text = re.sub(r"<[^>]+>", "", text)
-    return html.unescape(text).strip()
+    """移除 HTML 标签并解码实体（基于 ``html.parser``，安全）。"""
+    parser = _TextExtractor()
+    try:
+        parser.feed(text)
+        parser.close()
+    except Exception:  # pylint: disable=broad-except
+        # 解析器对极端畸形输入兜底：返回已收集的部分
+        pass
+    return parser.get_text().strip()
 
 
 def _normalize(text: str) -> str:
@@ -59,28 +262,14 @@ def _validate_url(url: str) -> tuple[bool, str]:
 
 
 def _to_markdown(raw_html: str) -> str:
-    """将 HTML 转换为 Markdown 格式文本。"""
-    text = re.sub(
-        r'<a\s+[^>]*href=["\']([^"\']+)["\'][^>]*>([\s\S]*?)</a>',
-        lambda m: f"[{_strip_tags(m[2])}]({m[1]})",
-        raw_html,
-        flags=re.I,
-    )
-    text = re.sub(
-        r"<h([1-6])[^>]*>([\s\S]*?)</h\1>",
-        lambda m: f"\n{'#' * int(m[1])} {_strip_tags(m[2])}\n",
-        text,
-        flags=re.I,
-    )
-    text = re.sub(
-        r"<li[^>]*>([\s\S]*?)</li>",
-        lambda m: f"\n- {_strip_tags(m[1])}",
-        text,
-        flags=re.I,
-    )
-    text = re.sub(r"</(p|div|section|article)>", "\n\n", text, flags=re.I)
-    text = re.sub(r"<(br|hr)\s*/?>", "\n", text, flags=re.I)
-    return _normalize(_strip_tags(text))
+    """将 HTML 转换为 Markdown 格式文本（基于 ``html.parser``，安全）。"""
+    parser = _MarkdownExtractor()
+    try:
+        parser.feed(raw_html)
+        parser.close()
+    except Exception:  # pylint: disable=broad-except
+        pass
+    return _normalize(parser.get_markdown())
 
 
 class WebFetch(BaseTool):
@@ -111,7 +300,7 @@ class WebFetch(BaseTool):
 
     def run(
         self,
-        url: str,
+        url: str = "",
         extract_mode: str = "markdown",
         max_chars: Optional[int] = None,
         **kwargs: Any,
@@ -240,7 +429,7 @@ class TavilySearch(BaseTool):
 
     def run(
         self,
-        query: str,
+        query: str = "",
         num_results: int = 5,
         search_depth: str = "basic",
         include_answer: bool = True,
@@ -304,7 +493,7 @@ class ArxivSearch(BaseTool):
     def __init__(self):
         super().__init__()
 
-    def run(self, query: str, max_results: int = 3, **kwargs: Any) -> str:
+    def run(self, query: str = "", max_results: int = 3, **kwargs: Any) -> str:
         try:
             import arxiv
         except ImportError:  # pylint: disable=broad-except
@@ -343,7 +532,6 @@ __all__ = [
 ]
 
 if __name__ == "__main__":
-    web_fetch_tool = WebFetch()
     tavily_search_tool = TavilySearch()
     arxiv_search_tool = ArxivSearch()
 

@@ -9,9 +9,6 @@
 
     <root>/
     ├── agent.md                    # Agent 自我定义（identity）
-    ├── profile/                    # 用户画像
-    │   ├── profile.md              # 当前画像（全量覆盖）
-    │   └── history.md              # 画像变更历史（append-only）
     ├── skills/                     # 用户自定义技能
     │   └── <name>/
     │       └── SKILL.md
@@ -223,15 +220,12 @@ class CourseLayout:
 class UserDataLayout:
     """用户数据目录布局。
 
-    一个实例对应一个用户的数据根目录，所有路径在初始化时一次性计算好。
-    通过 user_id 参数实现用户画像数据隔离：
-    - profile_{user_id}.md
-    - history_{user_id}.md
-    - mastery_{user_id}.json
+    一个实例对应一个用户的数据根目录，所有文件路径在初始化时一次性计算好。
+    用户画像已统一存储在数据库中，本布局只负责 Agent 自定义、技能与课程产物路径。
 
     Args:
         root: 用户数据根目录路径。
-        user_id: 用户 ID，用于画像文件隔离。为空时使用不带后缀的文件名（兼容旧逻辑）。
+        user_id: 用户 ID，用于课程/技能等文件隔离。
 
     Example::
 
@@ -239,9 +233,8 @@ class UserDataLayout:
         layout.ensure_dirs()
 
         # 各模块使用 layout 获取路径
-        profile_store = FileUserProfileStore(layout)
         skills_loader = SkillsLoader(layout)
-        ctx_builder = ContextBuilderWithProfileAndSkill(layout)
+        ctx_builder = ContextBuilderWithProfileAndSkill(layout, user_id="u_abc123")
 
         # 课程输出
         course = layout.course("太阳系")
@@ -256,20 +249,6 @@ class UserDataLayout:
 
         # ---- Agent 自我定义 ----
         self.identity_file: Path = self.root / "agent.md"
-
-        # ---- 用户画像（按 user_id 隔离） ----
-        self.profile_dir: Path = self.root / "profile"
-        if self.user_id:
-            self.profile_file: Path = self.profile_dir / f"profile_{self.user_id}.md"
-            self.profile_history_file: Path = (
-                self.profile_dir / f"history_{self.user_id}.md"
-            )
-            self.mastery_file: Path = self.profile_dir / f"mastery_{self.user_id}.json"
-        else:
-            # 兼容旧逻辑（无 user_id 时使用原始文件名）
-            self.profile_file: Path = self.profile_dir / "profile.md"
-            self.profile_history_file: Path = self.profile_dir / "history.md"
-            self.mastery_file: Path = self.profile_dir / "mastery.json"
 
         # ---- 用户自定义技能 ----
         self.skills_dir: Path = self.root / "skills"
@@ -312,7 +291,6 @@ class UserDataLayout:
         不会自动调用，由使用方在需要写入时手动调用。
         只读场景（如测试、检查）无需调用。
         """
-        self.profile_dir.mkdir(parents=True, exist_ok=True)
         self.skills_dir.mkdir(parents=True, exist_ok=True)
         self.courses_dir.mkdir(parents=True, exist_ok=True)
 
