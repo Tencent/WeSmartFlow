@@ -265,6 +265,7 @@ class Workflow:
             self._nodes[node.id] = node
 
         self._layers = self._topo_layers()
+        self._order = [nid for layer in self._layers for nid in layer]
 
     # ------------------------------------------------------------------
     # 拓扑
@@ -307,7 +308,19 @@ class Workflow:
     @property
     def node_ids(self) -> List[str]:
         """所有节点 id（拓扑顺序）。"""
-        return [nid for layer in self._layers for nid in layer]
+        return list(self._order)
+
+    def _progress_pct(self, completed: Dict[str, Any]) -> int:
+        """按节点权重计算完成百分比。
+
+        分子与分母必须沿同一顺序、用同一种方式求和：``sum()`` 对 float 做补偿
+        求和，而逐项 ``+=`` 是朴素累加，即使加数顺序相同两者也不逐位相等。原先
+        分母用 ``sum()``、分子用 ``+=`` 累加，分数权重下全部节点完成后
+        ``done / total`` 会是 0.999...，被 ``int()`` 截断成 99 而不是 100。
+        """
+        total = sum(self._nodes[nid].weight for nid in self._order) or 1.0
+        done = sum(self._nodes[nid].weight for nid in self._order if nid in completed)
+        return int(done / total * 100)
 
     # ------------------------------------------------------------------
     # 执行
@@ -335,9 +348,6 @@ class Workflow:
         completed: Dict[str, Any] = await store.load(ctx.run_id)
         skipped = [nid for nid in self.node_ids if nid in completed]
 
-        total_weight = sum(n.weight for n in self._nodes.values()) or 1.0
-        done_weight = sum(self._nodes[nid].weight for nid in skipped)
-
         yield WorkflowStartEvent(
             run_id=ctx.run_id, total_nodes=len(self._nodes), skipped=skipped
         )
@@ -349,7 +359,7 @@ class Workflow:
                 for nid in layer:
                     if nid in completed and nid in skipped:
                         yield NodeSkippedEvent(
-                            node_id=nid, pct=int(done_weight / total_weight * 100)
+                            node_id=nid, pct=self._progress_pct(completed)
                         )
 
                 if not pending:
@@ -365,9 +375,7 @@ class Workflow:
                     return
 
                 for nid in pending:
-                    yield NodeStartEvent(
-                        node_id=nid, pct=int(done_weight / total_weight * 100)
-                    )
+                    yield NodeStartEvent(node_id=nid, pct=self._progress_pct(completed))
 
                 # 层内并行
                 node_inputs = {**inputs, **completed}
@@ -410,7 +418,6 @@ class Workflow:
                             yield NodeFailedEvent(nid, str(result), node.retries + 1)
                             completed[nid] = {}
                             await store.save(ctx.run_id, nid, {})
-                            done_weight += node.weight
                             continue
 
                         yield NodeFailedEvent(nid, str(result), node.retries + 1)
@@ -421,11 +428,10 @@ class Workflow:
 
                     output, elapsed_ms = result
                     completed[nid] = output
-                    done_weight += node.weight
 
                     yield NodeDoneEvent(
                         node_id=nid,
-                        pct=int(done_weight / total_weight * 100),
+                        pct=self._progress_pct(completed),
                         duration_ms=elapsed_ms,
                         output_keys=sorted(output.keys()) if output else [],
                     )
