@@ -1478,6 +1478,8 @@ function resetToIdle() {
   currentCardIndex.value = 0;
   pendingCardSlots.clear();
   messages.value = [];
+  isThinking.value = false;
+  isGenerating.value = false;
   currentIndex.value = 0;
   topicInput.value = "";
   genProgress.value = 0;
@@ -1644,6 +1646,7 @@ function onQuizAnswered(result) {
 async function sendMessage(text) {
   if (!text.trim() || phase.value === "generating" || isGenerating.value)
     return;
+  const activeMessages = messages.value;
   isGenerating.value = true;
   messages.value.push({ role: "user", content: text, time: now() });
   inputText.value = "";
@@ -1670,6 +1673,8 @@ async function sendMessage(text) {
     await sendLocal("会话未创建，请重新开始学习。");
   }
 
+  // 重置后，旧请求的收尾不能解除新会话的发送锁。
+  if (messages.value !== activeMessages) return;
   isThinking.value = false;
   isGenerating.value = false;
   await nextTick();
@@ -1679,6 +1684,15 @@ async function sendMessage(text) {
 // 真实 SSE 流式请求
 async function sendWithSSE(text) {
   return new Promise((resolve) => {
+    let controller;
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      controller?.signal.removeEventListener("abort", finish);
+      if (sseController === controller) sseController = null;
+      resolve();
+    };
     let fullContent = "";
     const idx = messages.value.length - 1;
 
@@ -1755,7 +1769,7 @@ async function sendWithSSE(text) {
     // 标志：是否已经有过工具调用（用于区分思考轮 vs 最终回复轮）
     let hasToolCall = false;
 
-    sseController = sessionApi.streamMessage(currentSessionId.value, text, {
+    const callbacks = {
       // ── 流式分片事件 ──────────────────────────────────────────
       onThinkChunk: (delta, step) => {
         if (debugMode) console.log("[DEBUG] onThinkChunk:", { step, delta });
@@ -2114,8 +2128,7 @@ async function sendWithSSE(text) {
           html: renderMd(fullContent),
           ready: true,
         });
-        sseController = null;
-        resolve();
+        finish();
       },
       onError: async (err) => {
         if (debugMode) {
@@ -2123,9 +2136,23 @@ async function sendWithSSE(text) {
         }
         console.warn("SSE 错误:", err.message);
         await sendLocal(err.message);
-        resolve();
+        finish();
       },
-    });
+    };
+    // 取消会完成本轮等待，也会忽略旧流迟到的事件。
+    for (const event of Object.keys(callbacks)) {
+      const callback = callbacks[event];
+      callbacks[event] = (...args) => {
+        if (!finished) return callback(...args);
+      };
+    }
+    controller = sessionApi.streamMessage(
+      currentSessionId.value,
+      text,
+      callbacks,
+    );
+    sseController = controller;
+    controller.signal.addEventListener("abort", finish, { once: true });
   });
 }
 
