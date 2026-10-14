@@ -153,6 +153,25 @@ def prepare_card_html(
         element.attrib.clear()
         element.attrib.update(attrs)
 
+    # A flow node is a flex container: per CSS itemization rules every text run
+    # and inline element becomes a separate flex item squeezed onto one row —
+    # prose shrinks to min-content (one CJK glyph per line) while atomic KaTeX
+    # spans overflow and paint over the neighbouring fragments. Collapsing the
+    # node content into a single child restores normal inline flow (<br> and
+    # line wrapping work again) while keeping the flex vertical centering.
+    for node in root.find_class("flow-node"):
+        if len(node) == 1 and node[0].tag == "span" and not (node.text or "").strip():
+            continue  # already wrapped
+        if not (node.text or "").strip() and not len(node):
+            continue  # nothing to wrap
+        wrapper = dom.Element("span")
+        wrapper.text = node.text
+        node.text = None
+        for child in list(node):
+            wrapper.append(child)
+        node.append(wrapper)
+        issues.append("流程节点内容包裹为单一条目")
+
     # Validate actual teaching content before adding a missing title.
     titles = root.find_class("card-title")
     headings = list(root.iter("h1"))
