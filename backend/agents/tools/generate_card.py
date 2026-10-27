@@ -107,11 +107,21 @@ def _build_card_writer_agent(work_dir: Path, user_id) -> ReActAgent:
             LatexPdfCompileTool(TEX_TEMPLATE_DIR),
         ]
     )
-    # 图像工具走工厂构建（额度拦截 + 记账挂在 client 上），无需再绑 hook
-    tools.register(build_image_gen_tool(user_id))
+    # 图像工具走工厂构建（额度拦截 + 记账挂在 client 上），无需再绑 hook；
+    # 未配置图像生成时不注册工具，降级为纯 LaTeX 组件（与 generate_html_card 口径一致）
+    prompt = _CARD_WRITER_SYSTEM_PROMPT
+    try:
+        tools.register(build_image_gen_tool(user_id))
+    except (ValueError, RuntimeError):
+        logger = logging.getLogger(__name__)
+        logger.warning("卡片插图工具未配置，降级为无图模式", exc_info=True)
+        prompt += (
+            "\n当前没有可用的图片工具。不要生成、写入或引用任何图片文件，"
+            "用纯 LaTeX 组件（公式、表格、列表等）表达内容。"
+        )
     return ReActAgent(
         llm=get_llm(user_id, scene="chat"),
-        prompt_builder=StaticPromptBuilder(_CARD_WRITER_SYSTEM_PROMPT),
+        prompt_builder=StaticPromptBuilder(prompt),
         tool_registry=tools,
         max_steps=15,
         llm_config={"temperature": 0.3},

@@ -21,9 +21,11 @@ from services.provider_gateway import get_provider_gateway
 
 logger = logging.getLogger(__name__)
 
-# 与历史 agents/tools/image_gen_factory.py 的默认值保持一致
-_DEFAULT_API_KEY = "any"
-_DEFAULT_BASE_URL = "http://localhost:8080/v1"
+# 空串 = 未配置：get_image_gen 会对空 api_key / base_url 提前抛 ValueError，
+# 让上层（tool_catalog / generate_html_card / generate_card）走"不注册图片工具"的降级，
+# 而不是把注定失败的客户端发给 Agent 在运行时报错（issue #62）。
+_DEFAULT_API_KEY = ""
+_DEFAULT_BASE_URL = ""
 
 
 def _read_config(user_id: str) -> dict:
@@ -145,8 +147,18 @@ def get_image_gen(
         user_id:    用户 ID，用于读配置与额度归属。
         with_quota: 是否启用事前拦截（默认 True）；系统级调用传 False。
         scene:      用量归因场景（见 usage_meter.VALID_SCENES）。
+
+    Raises:
+        ValueError: 图像生成未配置（用户设置与环境变量均为空）。
+                    调用方应捕获并降级（不注册图片工具），
+                    与 routers.settings.test-image 的前置校验口径一致。
     """
     cfg = _read_config(user_id)
+    if not cfg["api_key"] or not cfg["base_url"]:
+        raise ValueError(
+            "图像生成未配置：请先在用户设置或 .env 中配置 "
+            "img_api_key/IMG_API_KEY 与 img_base_url/IMG_BASE_URL"
+        )
     provider = os.getenv("IMG_PROVIDER", "qwen").strip().lower()
 
     if provider == "openai":
