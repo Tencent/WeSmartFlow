@@ -441,6 +441,7 @@ async def test_workflow_dag() -> None:
     print("\n── 8.1 Workflow DAG 拓扑与并行 ──")
 
     from agent_core.agent.workflow import (
+        MemoryCheckpointStore,
         Node,
         NodeDoneEvent,
         Workflow,
@@ -483,6 +484,41 @@ async def test_workflow_dag() -> None:
     node_dones = [e for e in events if isinstance(e, NodeDoneEvent)]
     check("每节点产出完成事件", len(node_dones) == 4)
     check("进度单调递增至 100", node_dones[-1].pct == 100, f"{node_dones[-1].pct}%")
+
+    # 分数权重：节点声明顺序与拓扑序不一致时，pct 仍须收敛到 100
+    weights = {
+        "a": 0.12,
+        "b": 0.18,
+        "c": 0.35,
+        "d": 0.05,
+        "e": 0.1,
+        "f": 0.25,
+        "g": 0.2,
+        "h": 0.45,
+        "i": 0.15,
+        "j": 0.3,
+    }
+    wf_w = Workflow(
+        [
+            Node(nid, run=make(nid), weight=weights[nid])
+            for nid in ("e", "g", "j", "i", "f", "d", "c", "h", "a", "b")
+        ],
+        name="weighted",
+    )
+    dones_w = [
+        e async for e in wf_w.stream({}, new_context()) if isinstance(e, NodeDoneEvent)
+    ]
+    check("分数权重下进度达 100", dones_w[-1].pct == 100, f"{dones_w[-1].pct}%")
+
+    # 分数权重 + 断点续跑（部分节点来自 checkpoint）同样须收敛到 100
+    store_w = MemoryCheckpointStore()
+    ctx_w = new_context()
+    for nid in ("a", "b", "c", "d"):
+        await store_w.save(ctx_w.run_id, nid, {"value": nid})
+    dones_r = [
+        e async for e in wf_w.stream({}, ctx_w, store_w) if isinstance(e, NodeDoneEvent)
+    ]
+    check("分数权重续跑进度达 100", dones_r[-1].pct == 100, f"{dones_r[-1].pct}%")
 
     # 环检测
     try:
