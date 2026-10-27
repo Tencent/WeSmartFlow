@@ -267,6 +267,12 @@ LLM_MODEL="your-model"
 
 OpenAI, DeepSeek, Qwen, and other OpenAI-compatible endpoints can be used. Configure at least one sign-in method: GitHub OAuth, email via SMTP, or WeChat Mini Program. Search, image generation, and voice features can be enabled as needed. See [`backend/.env.example`](./backend/.env.example) and the [backend documentation](./backend/README_EN.md) for all available settings.
 
+Security defaults:
+
+- When `JWT_SECRET` is empty, the backend generates a random master key and stores it in `data/jwt_secret.key` (mode 0600). Set an explicit random value in `.env` for production and back up the file. Legacy example values such as `change-me-in-production` abort startup.
+- The backend listens on `127.0.0.1` by default. Set `BACKEND_HOST=0.0.0.0` explicitly behind a reverse proxy/firewall when external access is required.
+- The admin console requires explicit `ADMIN_USERNAME` / `ADMIN_PASSWORD`; all `/api/admin` routes return 503 when unset.
+
 ### 4. Start the backend and frontend
 
 ```bash

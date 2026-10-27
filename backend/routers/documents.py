@@ -51,6 +51,7 @@ from services.document_resolver import (
     resolve_asset,
     resolve_main,
 )
+from utils.file_ticket import MAX_TICKET_MINUTES, create_file_ticket
 from utils.web_auth import COOKIE_NAME, get_user_from_request_flexible
 from dependencies import get_current_user
 
@@ -291,11 +292,20 @@ def _download_prepared_document(rf, filename: str) -> StreamingResponse | FileRe
     return _file_response(rf.abs_path, download_filename=filename)
 
 
+def _is_https_request(request: Request | None) -> bool:
+    if request is None:
+        return False
+    forwarded = (request.headers.get("x-forwarded-proto") or "").split(",")[0]
+    return request.url.scheme == "https" or forwarded.strip().lower() == "https"
+
+
 def _file_response(
     abs_path: Path,
     *,
     query_token: str | None = None,
     download_filename: str | None = None,
+    doc_id: str | None = None,
+    request: Request | None = None,
 ) -> FileResponse:
     """统一的文件响应：自动推断 MIME，可选写 Cookie / Content-Disposition。"""
     headers: dict[str, str] = {}
@@ -304,11 +314,16 @@ def _file_response(
     if abs_path.suffix.lower() == ".pdf":
         headers["Cache-Control"] = "no-store, max-age=0"
         headers["Pragma"] = "no-cache"
-    if query_token:
-        # iframe / web-view 首次以 ?token= 打开主资源后，子资源请求由 cookie 兜底
-        headers["Set-Cookie"] = (
-            f"{COOKIE_NAME}={query_token}; Path=/; HttpOnly; SameSite=Lax"
+    if query_token and doc_id:
+        # iframe / web-view 首次以 ?ticket= 打开主资源后，子资源请求由 cookie 兜底。
+        # Cookie 只写入单文档票据，且路径限定在该文档下。
+        cookie = (
+            f"{COOKIE_NAME}={query_token}; "
+            f"Path=/api/documents/{quote(doc_id, safe='')}/; HttpOnly; SameSite=Lax"
         )
+        if _is_https_request(request):
+            cookie += "; Secure"
+        headers["Set-Cookie"] = cookie
     return FileResponse(
         path=abs_path,
         media_type=_infer_mime(abs_path),
@@ -507,10 +522,11 @@ async def _get_document_raw(doc_id: str, request: Request):
     """读取文档主资源。
 
     URL 参数：
-      - ``token`` — 可选；为 iframe / web-view 兜底鉴权。命中后会写同域 cookie。
+      - ``ticket`` — 可选；单文档短时效票据，为 iframe / web-view 兜底鉴权，
+        命中后会写限定在该文档路径下的 cookie。登录 token 不再允许放进 URL。
       - ``download=1`` — 强制 ``Content-Disposition: attachment``，触发浏览器下载。
     """
-    user_id, query_token = get_user_from_request_flexible(request)
+    user_id, query_ticket = get_user_from_request_flexible(request, doc_id)
     try:
         rf = resolve_main(doc_id, user_id)
     except ResolverNotFound:
@@ -524,7 +540,9 @@ async def _get_document_raw(doc_id: str, request: Request):
         return _download_prepared_document(rf, download_filename)
     return _file_response(
         rf.abs_path,
-        query_token=query_token,
+        query_token=query_ticket,
+        doc_id=doc_id,
+        request=request,
     )
 
 
@@ -538,6 +556,27 @@ async def head_document_raw(doc_id: str, request: Request):
     return await _get_document_raw(doc_id, request)
 
 
+@router.post("/{doc_id}/ticket", operation_id="create_document_ticket")
+def create_document_ticket(
+    doc_id: str,
+    minutes: int = 30,
+    user_id: str = Depends(get_current_user),
+):
+    """为 iframe / web-view / 分享链接签发单文档、短时效访问票据。
+
+    票据只能读取 ``doc_id`` 这一个文档（含其伴生资源），通过 ``?ticket=`` 使用。
+    """
+    try:
+        resolve_main(doc_id, user_id)
+    except ResolverNotFound:
+        raise HTTPException(404, "文件不存在")
+    minutes = max(1, min(minutes, MAX_TICKET_MINUTES))
+    return {
+        "ticket": create_file_ticket(user_id, doc_id, expires_in_minutes=minutes),
+        "expires_in": minutes * 60,
+    }
+
+
 async def _get_document_asset(doc_id: str, sub_path: str, request: Request):
     """读取文档主资源同目录下的伴生文件。
 
@@ -547,12 +586,14 @@ async def _get_document_asset(doc_id: str, sub_path: str, request: Request):
     沉浸式课程章节音频帧：
       ``/api/documents/{audio_doc_id}/asset/frame_001.wav``
     """
-    user_id, query_token = get_user_from_request_flexible(request)
+    user_id, query_ticket = get_user_from_request_flexible(request, doc_id)
     try:
         rf = resolve_asset(doc_id, sub_path, user_id)
     except (ResolverNotFound, AssetPathInvalid):
         raise HTTPException(404, "文件不存在")
-    return _file_response(rf.abs_path, query_token=query_token)
+    return _file_response(
+        rf.abs_path, query_token=query_ticket, doc_id=doc_id, request=request
+    )
 
 
 @router.get("/{doc_id}/asset/{sub_path:path}", operation_id="get_document_asset")

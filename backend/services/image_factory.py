@@ -27,15 +27,28 @@ _DEFAULT_BASE_URL = "http://localhost:8080/v1"
 
 
 def _read_config(user_id: str) -> dict:
-    """读取图像生成配置：用户设置优先，回退环境变量与内置默认值。"""
+    """读取图像生成配置：用户设置优先，回退环境变量与内置默认值。
+
+    凭据与地址必须成对取值：平台 ``IMG_API_KEY`` 只能发往平台 ``IMG_BASE_URL``。
+    用户若只改了 ``img_base_url`` 而没有自己的 key，其地址会被忽略，
+    否则任意登录用户都能把平台密钥重定向到自己的服务器。
+    """
     try:
         from database import get_setting
 
+        user_key = (get_setting(user_id, "img_api_key") or "").strip()
+        if user_key:
+            api_key = user_key
+            base_url = get_setting(user_id, "img_base_url") or os.getenv(
+                "IMG_BASE_URL", _DEFAULT_BASE_URL
+            )
+        else:
+            api_key = os.getenv("IMG_API_KEY", _DEFAULT_API_KEY)
+            base_url = os.getenv("IMG_BASE_URL", _DEFAULT_BASE_URL)
+
         return {
-            "api_key": get_setting(user_id, "img_api_key")
-            or os.getenv("IMG_API_KEY", _DEFAULT_API_KEY),
-            "base_url": get_setting(user_id, "img_base_url")
-            or os.getenv("IMG_BASE_URL", _DEFAULT_BASE_URL),
+            "api_key": api_key,
+            "base_url": base_url,
             "model": get_setting(user_id, "img_model")
             or os.getenv("IMG_MODEL")
             or None,

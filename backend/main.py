@@ -14,7 +14,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from config import BACKEND_HOST, BACKEND_PORT, CORS_ORIGINS, DATA_DIR, LOG_DIR
+from config import (
+    BACKEND_HOST,
+    BACKEND_PORT,
+    CORS_ORIGINS,
+    DATA_DIR,
+    LOG_DIR,
+    security_warnings,
+)
 from database import init_db
 from kg import init_kg_db
 from routers.nodes import router as nodes_router
@@ -191,6 +198,11 @@ def on_startup():
     init_kg_db()
     log = logging.getLogger(__name__)
     log.info("WeSmartFlow 后端已启动，主库 + KG 库初始化完成")
+
+    # 认证信任根相关提示：弱密钥在 config 导入阶段已直接拒绝，这里只提示
+    # 自动生成密钥、非回环监听、admin 未配置等需要运维知情的状态。
+    for warning in security_warnings():
+        log.warning("安全配置：%s", warning)
 
     # 注："document → KG exhibit 自动登记"钩子已废弃。
     # KG 反馈闭环模型(最小形态):

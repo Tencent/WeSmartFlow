@@ -17,15 +17,18 @@ from dataclasses import dataclass, field
 from agent_core.agent.events import AgentFinalEvent, DomainEvent
 from agents.events import KIND_FILE_CREATED
 from config import PUBLIC_BASE_URL
-from dependencies import create_access_token
 from models.session import SessionCreate
 from repositories import SessionRepository
 from services import TutorService
 from services.content_guard import get_content_guard
+from utils.file_ticket import create_file_ticket
 from utils.log_safe import safe_log
 from channels import store
 
 logger = logging.getLogger(__name__)
+
+# 微信里的链接会被反复点开，给 24 小时；但只能读这一个文档，且不是登录 token。
+WECHAT_LINK_TICKET_MINUTES = 24 * 60
 
 
 @dataclass
@@ -46,9 +49,13 @@ class BotReply:
         return out.strip() or "（暂时没有可返回的内容）"
 
 
-def _build_asset_url(file_id: str, user_jwt: str, *, download: bool) -> str:
+def _build_asset_url(file_id: str, owner_user_id: str, *, download: bool) -> str:
+    """生成发给微信的文档链接；只携带该文档的短时效票据，不含登录 token。"""
     base = PUBLIC_BASE_URL or ""
-    q = f"?token={user_jwt}" + ("&download=1" if download else "")
+    ticket = create_file_ticket(
+        owner_user_id, file_id, expires_in_minutes=WECHAT_LINK_TICKET_MINUTES
+    )
+    q = f"?ticket={ticket}" + ("&download=1" if download else "")
     return f"{base}/api/documents/{file_id}/raw{q}"
 
 
@@ -88,7 +95,6 @@ async def generate_reply(owner_user_id: str, peer_id: str, text: str) -> BotRepl
             return BotReply(text=result.reason or "抱歉，该内容无法处理。")
 
     session_id = _get_or_create_session(owner_user_id, peer_id)
-    user_jwt = create_access_token(user_id=owner_user_id)
     service = TutorService()
 
     reply = BotReply()
@@ -104,7 +110,7 @@ async def generate_reply(owner_user_id: str, peer_id: str, text: str) -> BotRepl
                         "doc_id": file_id,
                         "card_type": ft,
                         "title": title,
-                        "url": _build_asset_url(file_id, user_jwt, download=False),
+                        "url": _build_asset_url(file_id, owner_user_id, download=False),
                     }
                 )
             else:
@@ -112,7 +118,9 @@ async def generate_reply(owner_user_id: str, peer_id: str, text: str) -> BotRepl
                 reply.links.append(
                     {
                         "title": title,
-                        "url": _build_asset_url(file_id, user_jwt, download=as_file),
+                        "url": _build_asset_url(
+                            file_id, owner_user_id, download=as_file
+                        ),
                         "kind": "file" if as_file else "link",
                     }
                 )

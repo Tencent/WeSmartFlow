@@ -25,6 +25,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 ENV_PATH = ROOT.parent.parent / ".env"  # edu-agent/.env
 PORT = int(os.environ.get("PORT", "8767"))
+# 默认只监听本机回环；确需局域网访问时显式设置 LIVE_SCIENCE_HOST=0.0.0.0。
+HOST = os.environ.get("LIVE_SCIENCE_HOST", "127.0.0.1")
+ALLOWED_ORIGINS = {
+    o.strip()
+    for o in os.environ.get(
+        "CORS_ORIGINS", "http://localhost:5173,http://localhost:5174"
+    ).split(",")
+    if o.strip() and o.strip() != "*"
+}
 
 ENV_KEYS = [
     "LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL",
@@ -1399,7 +1408,11 @@ class Handler(SimpleHTTPRequestHandler):
         super().__init__(*args, directory=str(ROOT), **kwargs)
 
     def _cors(self):
-        self.send_header("Access-Control-Allow-Origin", "*")
+        # 只回显白名单内的来源；同源访问不需要 CORS 头。
+        origin = self.headers.get("Origin", "")
+        if origin in ALLOWED_ORIGINS:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 
@@ -1592,9 +1605,9 @@ class Handler(SimpleHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    print(f"知识之境 server → http://127.0.0.1:{PORT}")
+    print(f"知识之境 server → http://{HOST}:{PORT}")
     print(f"  .env: {ENV_PATH} ({'found' if ENV_PATH.exists() else 'NOT FOUND'})")
     print(f"  LLM:  {CFG['LLM_MODEL'] or '?'} @ {CFG['LLM_BASE_URL'] or '?'} key={'yes' if CFG['LLM_API_KEY'] else 'NO'}")
     tts_desc = "dashscope qwen3-tts-instruct-flash" if bool(CFG["DASHSCOPE_API_KEY"]) else (CFG["TTS_BASE_URL"] or "not configured (fallback: browser voice)")
     print(f"  TTS:  {tts_desc}")
-    ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
+    ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()

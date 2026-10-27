@@ -5,8 +5,8 @@
 """
 
 import logging
-import random
 import re
+import secrets
 import smtplib
 import time
 import uuid
@@ -15,7 +15,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import APIRouter, HTTPException, Request, status, Depends
 from pydantic import Field
 
 from api.contracts import ApiRequest, ApiResponse, standard_error_responses
@@ -33,6 +33,7 @@ from integrations.wechat import (
     get_wechat_client,
 )
 from utils.log_safe import safe_log
+from utils.rate_limit import SlidingWindowLimiter, client_ip
 from config import (
     SMTP_HOST,
     SMTP_PORT,
@@ -62,10 +63,27 @@ CODE_EXPIRE_SECONDS = 300  # 5 分钟过期
 CODE_COOLDOWN_SECONDS = 60  # 60 秒内不可重发
 MAX_VERIFY_ATTEMPTS = 5  # 最多验证 5 次
 
+# 按来源 IP 限流：按邮箱的冷却/次数限制挡不住“换邮箱轰炸”和“换邮箱试验证码”。
+# 阈值留有余量，避免校园/公司出口 IP 下的正常用户被误伤。
+_send_code_ip_limiter = SlidingWindowLimiter(
+    20, 3600, detail="该网络发送验证码过于频繁，请稍后再试"
+)
+_verify_code_ip_limiter = SlidingWindowLimiter(
+    60, 600, detail="该网络验证尝试过多，请稍后再试"
+)
+
+
+def _limit_send_code_by_ip(request: Request) -> None:
+    _send_code_ip_limiter.hit(client_ip(request))
+
+
+def _limit_verify_code_by_ip(request: Request) -> None:
+    _verify_code_ip_limiter.hit(client_ip(request))
+
 
 def _generate_code() -> str:
-    """生成 6 位数字验证码。"""
-    return "".join([str(random.randint(0, 9)) for _ in range(CODE_LENGTH)])
+    """生成 6 位数字验证码（使用密码学安全随机源）。"""
+    return "".join(str(secrets.randbelow(10)) for _ in range(CODE_LENGTH))
 
 
 def _cleanup_expired():
@@ -189,7 +207,11 @@ class GitHubCallbackRequest(ApiRequest):
 # --------------------------------------------------------------------------
 
 
-@router.post("/send-code", response_model=SendCodeResponse)
+@router.post(
+    "/send-code",
+    response_model=SendCodeResponse,
+    dependencies=[Depends(_limit_send_code_by_ip)],
+)
 def send_code(body: SendCodeRequest):
     """
     发送邮箱验证码。
@@ -237,7 +259,11 @@ def send_code(body: SendCodeRequest):
     return SendCodeResponse(message="验证码已发送，请查收邮件")
 
 
-@router.post("/verify-code", response_model=LoginResponse)
+@router.post(
+    "/verify-code",
+    response_model=LoginResponse,
+    dependencies=[Depends(_limit_verify_code_by_ip)],
+)
 def verify_code(body: VerifyCodeRequest):
     """
     验证邮箱验证码并登录。
@@ -274,7 +300,9 @@ def verify_code(body: VerifyCodeRequest):
             )
 
         # 验证码匹配
-        if data["code"] != code:
+        if not secrets.compare_digest(
+            str(data["code"]).encode("utf-8"), code.encode("utf-8")
+        ):
             remaining = MAX_VERIFY_ATTEMPTS - data["attempts"]
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

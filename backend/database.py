@@ -375,14 +375,36 @@ def _make_connection() -> sqlite3.Connection:
     return conn
 
 
-def _hash_password(plain: str) -> str:
-    """对明文密码进行 bcrypt 哈希。"""
-    return bcrypt.hashpw(plain.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-
-
 def verify_password(plain: str, hashed: str) -> bool:
-    """验证明文密码是否匹配哈希。"""
-    return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+    """验证明文密码是否匹配哈希；空值/损坏哈希一律视为不可用。"""
+    if not hashed:
+        return False
+    try:
+        return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+    except ValueError:
+        return False
+
+
+LEGACY_DEFAULT_PASSWORD = "123456"
+
+
+def _ensure_default_user(conn: sqlite3.Connection) -> None:
+    """确保外键兜底用户存在，且不携带任何可用口令。
+
+    ``default`` 是历史匿名/示例路径固定使用的 user_id，攻击者无需猜测。
+    因此该账号不能有可登录口令：新库直接写空哈希；旧库若仍是公开的
+    "123456" 口令，则在启动时就地清除。
+    """
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO users (id, name, password_hash, avatar_url, preferences, created_at)
+        VALUES ('default', '默认用户', '', NULL, '{}', datetime('now'))
+        """
+    )
+    row = conn.execute("SELECT password_hash FROM users WHERE id='default'").fetchone()
+    if row and row[0] and verify_password(LEGACY_DEFAULT_PASSWORD, row[0]):
+        conn.execute("UPDATE users SET password_hash='' WHERE id='default'")
+        logger.warning("已清除 default 用户的公开默认口令")
 
 
 def init_db() -> None:
@@ -407,15 +429,8 @@ def init_db() -> None:
         conn.executescript(SCHEMA)
         ensure_credit_card_columns(conn)
 
-        # 确保默认用户存在（外键约束需要）
-        default_hash = _hash_password("123456")
-        conn.execute(
-            """
-            INSERT OR IGNORE INTO users (id, name, password_hash, avatar_url, preferences, created_at)
-            VALUES ('default', '默认用户', ?, NULL, '{}', datetime('now'))
-            """,
-            (default_hash,),
-        )
+        # 确保默认用户存在（外键约束需要），且不带可用口令
+        _ensure_default_user(conn)
         initialize_existing(conn)
         conn.commit()
     logger.info("数据库初始化完成：%s", DB_PATH)

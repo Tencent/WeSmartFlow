@@ -137,9 +137,15 @@ RUN_VIZ_BROWSER_TESTS=1 python -m pytest backend/tests/test_viz_runtime.py -q
 | `LLM_API_KEY` | LLM API 密钥 | ✅ | `sk-xxx` |
 | `LLM_BASE_URL` | LLM API 端点 | ✅ | `https://api.openai.com/v1` |
 | `LLM_MODEL` | 模型名称 | ✅ | `gpt-4o` |
-| `BACKEND_HOST` | 监听地址 | 否 | `0.0.0.0` |
+| `BACKEND_HOST` | 监听地址。默认只监听回环；对外提供服务时显式改为 `0.0.0.0` 并加反向代理/防火墙 | 否 | `127.0.0.1` |
 | `BACKEND_PORT` | 监听端口 | 否 | `8080` |
-| `CORS_ORIGINS` | CORS 允许源 | 否 | `http://localhost:5173` |
+| `CORS_ORIGINS` | CORS 允许源（逗号分隔；不建议 `*`，启动时会告警） | 否 | `http://localhost:5173` |
+| `JWT_SECRET` | 登录 token 的 HS256 主密钥，至少 32 个随机字符；留空则自动生成 | 否 | `python -c "import secrets; print(secrets.token_urlsafe(48))"` |
+| `JWT_SECRET_FILE` | 自动生成密钥的保存路径（权限 0600） | 否 | `data/jwt_secret.key` |
+| `JWT_EXPIRE_HOURS` | 用户 token 有效期（小时） | 否 | `72` |
+| `ADMIN_USERNAME` | 管理后台账号；未配置时所有 `/api/admin` 接口返回 503 | 否 | `admin` |
+| `ADMIN_PASSWORD` | 管理后台口令，建议使用 12 位以上随机串；轮换后旧 admin token 立即失效 | 否 | — |
+| `ADMIN_TOKEN_EXPIRE_HOURS` | admin token 有效期（小时） | 否 | `12` |
 | `TAVILY_API_KEY` | Web 搜索 API | 否 | `tvly-xxx` |
 | `IMG_API_KEY` | 图像生成 API | 否 | `sk-xxx` |
 | `IMG_BASE_URL` | 图像生成端点 | 否 | `https://api.openai.com/v1` |

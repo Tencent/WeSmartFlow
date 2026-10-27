@@ -267,6 +267,12 @@ LLM_MODEL="your-model"
 
 OpenAI、DeepSeek、通义千问等 OpenAI 兼容接口均可接入。登录还需要配置 GitHub OAuth、邮箱 SMTP 或微信小程序中的至少一种方式；搜索、图片生成与语音能力可以按需开启。完整变量说明见 [`backend/.env.example`](./backend/.env.example) 和 [后端文档](./backend/README.md)。
 
+安全相关默认值：
+
+- `JWT_SECRET` 留空时，后端会生成随机主密钥并保存到 `data/jwt_secret.key`（权限 0600）；生产环境建议在 `.env` 显式配置随机串，并备份该文件。历史示例值（如 `change-me-in-production`）会导致启动失败。
+- 后端默认只监听 `127.0.0.1`。需要局域网/公网访问时显式设置 `BACKEND_HOST=0.0.0.0`，并确保前面有反向代理/防火墙。
+- 管理后台需显式配置 `ADMIN_USERNAME` / `ADMIN_PASSWORD`；未配置时所有 `/api/admin` 接口返回 503。
+
 ### 4. 启动前后端
 
 ```bash

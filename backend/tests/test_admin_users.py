@@ -43,7 +43,9 @@ class AdminUserTests(unittest.TestCase):
             patch.object(
                 admin_auth, "JWT_SECRET", "test-only-admin-secret-32-characters"
             ),
-            patch.object(admin_auth, "JWT_ALGORITHM", "HS256"),
+            # admin 接口要求显式配置账号，未配置时一律 503。
+            patch.object(admin_auth, "ADMIN_USERNAME", "admin"),
+            patch.object(admin_auth, "ADMIN_PASSWORD", "test-admin-password"),
         ]
         for item in self.patches:
             item.start()

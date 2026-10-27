@@ -137,9 +137,15 @@ These use fixed fixtures and mocked model responses, not paid model calls or pro
 | `LLM_API_KEY` | LLM API key | ✅ | `sk-xxx` |
 | `LLM_BASE_URL` | LLM API endpoint | ✅ | `https://api.openai.com/v1` |
 | `LLM_MODEL` | Model name | ✅ | `gpt-4o` |
-| `BACKEND_HOST` | Listen address | No | `0.0.0.0` |
+| `BACKEND_HOST` | Listen address. Loopback by default; set `0.0.0.0` explicitly behind a reverse proxy/firewall | No | `127.0.0.1` |
 | `BACKEND_PORT` | Listen port | No | `8080` |
-| `CORS_ORIGINS` | CORS allowed origins | No | `http://localhost:5173` |
+| `CORS_ORIGINS` | CORS allowed origins (comma-separated; avoid `*`, a startup warning is emitted) | No | `http://localhost:5173` |
+| `JWT_SECRET` | HS256 master key for login tokens, at least 32 random characters; generated when empty | No | `python -c "import secrets; print(secrets.token_urlsafe(48))"` |
+| `JWT_SECRET_FILE` | Path of the auto-generated key file (mode 0600) | No | `data/jwt_secret.key` |
+| `JWT_EXPIRE_HOURS` | User token lifetime in hours | No | `72` |
+| `ADMIN_USERNAME` | Admin console username; all `/api/admin` routes return 503 when unset | No | `admin` |
+| `ADMIN_PASSWORD` | Admin console password, preferably 12+ random characters; rotating it revokes existing admin tokens | No | — |
+| `ADMIN_TOKEN_EXPIRE_HOURS` | Admin token lifetime in hours | No | `12` |
 | `TAVILY_API_KEY` | Web search API | No | `tvly-xxx` |
 | `IMG_API_KEY` | Image generation API | No | `sk-xxx` |
 | `IMG_BASE_URL` | Image generation endpoint | No | `https://api.openai.com/v1` |

@@ -16,7 +16,9 @@ export default defineConfig({
     },
   },
   server: {
-    host: "0.0.0.0",
+    // 开发服务器会把 /api 代理到本机后端；监听 0.0.0.0 等于把后端暴露给整个局域网。
+    // 需要局域网/手机调试时：VITE_DEV_HOST=0.0.0.0 npm run dev
+    host: process.env.VITE_DEV_HOST || "127.0.0.1",
     port: 5173,
     fs: {
       allow: [frontendDir, examplesDir],

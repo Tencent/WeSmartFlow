@@ -20,7 +20,15 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+    status,
+)
 from pydantic import BaseModel, Field
 
 from kg import (
@@ -31,11 +39,14 @@ from kg import (
     ProposalService,
 )
 from utils.admin_auth import (
+    ADMIN_NOT_CONFIGURED_DETAIL,
     admin_credentials_configured,
     create_admin_token,
     require_admin,
     verify_admin_credentials,
 )
+from utils.log_safe import safe_log
+from utils.rate_limit import FailureLockout, client_ip
 
 logger = logging.getLogger(__name__)
 
@@ -57,18 +68,38 @@ class AdminLoginResponse(BaseModel):
     token_type: str = "bearer"
 
 
+# 单 IP：15 分钟内失败 5 次锁 15 分钟。
+# 全局：15 分钟内失败 30 次锁 15 分钟，抵御分布式（多 IP）猜口令；
+# 代价是被攻击期间合法管理员最多等 15 分钟。
+_LOGIN_LOCK_DETAIL = "登录失败次数过多，请稍后再试"
+_GLOBAL_KEY = "admin-login"
+_ip_lockout = FailureLockout(5, 900, 900, detail=_LOGIN_LOCK_DETAIL)
+_global_lockout = FailureLockout(30, 900, 900, detail=_LOGIN_LOCK_DETAIL)
+
+
 @router.post("/login", response_model=AdminLoginResponse)
-def admin_login(body: AdminLoginRequest):
+def admin_login(body: AdminLoginRequest, request: Request):
     if not admin_credentials_configured():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Admin 未配置（请在 .env 中设置 ADMIN_USERNAME / ADMIN_PASSWORD）",
+            detail=ADMIN_NOT_CONFIGURED_DETAIL,
         )
+
+    # 先查锁定再比对口令：被锁定期间即使口令正确也拒绝，不给暴力猜测任何信号。
+    ip = client_ip(request)
+    _ip_lockout.check(ip)
+    _global_lockout.check(_GLOBAL_KEY)
+
     if not verify_admin_credentials(body.username, body.password):
+        _ip_lockout.record_failure(ip)
+        _global_lockout.record_failure(_GLOBAL_KEY)
+        logger.warning("admin 登录失败 ip=%s", safe_log(ip))
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="账号或密码错误",
         )
+
+    _ip_lockout.record_success(ip)
     return AdminLoginResponse(access_token=create_admin_token())
 
 

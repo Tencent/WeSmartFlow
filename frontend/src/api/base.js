@@ -142,14 +142,14 @@ async function fetchAsBlobUrl(path) {
 
 /**
  * 拼接主资源 URL：/api/documents/{docId}/raw。
- * 可传 ?token=xxx，用于 iframe / web-view 等无法注入 header 的场景。
+ * iframe / web-view 等无法注入 header 的场景，传入单文档短时效票据 ``ticket``
+ * （由 POST /api/documents/{docId}/ticket 签发）。登录 token 禁止放进 URL。
  */
-function docRawUrl(docId, { withToken = false, revision = "" } = {}) {
+function docRawUrl(docId, { ticket = "", revision = "" } = {}) {
   const url = `${BASE_URL}/api/documents/${docId}/raw`;
   const params = new URLSearchParams();
   if (revision) params.set("v", String(revision));
-  const token = localStorage.getItem("wesmartflow-token") || "";
-  if (withToken && token) params.set("token", token);
+  if (ticket) params.set("ticket", ticket);
   const query = params.toString();
   return query ? `${url}?${query}` : url;
 }
@@ -157,12 +157,10 @@ function docRawUrl(docId, { withToken = false, revision = "" } = {}) {
 /**
  * 拼接伴生资源 URL：/api/documents/{docId}/asset/{subPath}。
  */
-function docAssetUrl(docId, subPath, { withToken = false } = {}) {
+function docAssetUrl(docId, subPath, { ticket = "" } = {}) {
   const cleaned = String(subPath || "").replace(/^\/+/, "");
   const url = `${BASE_URL}/api/documents/${docId}/asset/${cleaned}`;
-  if (!withToken) return url;
-  const token = localStorage.getItem("wesmartflow-token") || "";
-  return token ? `${url}?token=${encodeURIComponent(token)}` : url;
+  return ticket ? `${url}?ticket=${encodeURIComponent(ticket)}` : url;
 }
 
 export const api = {

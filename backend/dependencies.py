@@ -1,15 +1,18 @@
-"""
-JWT 鉴权依赖
+"""JWT 鉴权依赖
 
 提供 token 创建、验证和 FastAPI 依赖注入。
+
+用户 token 与管理员 token 使用不同的派生签名密钥和 audience，
+``decode_access_token`` 只接受用户 token，管理员 token 无法冒充普通用户，
+反之亦然。
 """
 
 import jwt
-from datetime import datetime, timedelta, timezone
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
-from config import JWT_SECRET, JWT_ALGORITHM, JWT_EXPIRE_HOURS
+from config import JWT_EXPIRE_HOURS, JWT_SECRET
+from utils.jwt_tokens import USER_TOKEN_AUDIENCE, decode_token, encode_token
 
 # Missing credentials are authentication failures.  Returning 401 keeps the
 # browser and mini-program clients on the same re-login path as expired JWTs.
@@ -17,21 +20,23 @@ security = HTTPBearer(auto_error=False)
 
 
 def create_access_token(user_id: str) -> str:
-    """生成 JWT access token。"""
-    payload = {
-        "sub": user_id,
-        "exp": datetime.now(timezone.utc) + timedelta(hours=JWT_EXPIRE_HOURS),
-        "iat": datetime.now(timezone.utc),
-    }
-    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+    """生成用户 JWT access token。"""
+    return encode_token(
+        subject=user_id,
+        audience=USER_TOKEN_AUDIENCE,
+        master_secret=JWT_SECRET,
+        expires_in_hours=JWT_EXPIRE_HOURS,
+    )
 
 
 def decode_access_token(token: str) -> str:
-    """解析 JWT token，返回 user_id；验证失败抛出 401。"""
+    """解析用户 JWT token，返回 user_id；验证失败抛出 401。"""
     try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-        user_id: str = payload.get("sub")
-        if user_id is None:
+        payload = decode_token(
+            token, audience=USER_TOKEN_AUDIENCE, master_secret=JWT_SECRET
+        )
+        user_id = payload.get("sub")
+        if not isinstance(user_id, str) or not user_id:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="无效的认证凭据",

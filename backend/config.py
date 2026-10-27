@@ -6,6 +6,8 @@ from pathlib import Path
 import os
 from dotenv import load_dotenv
 
+from utils.jwt_secret import load_jwt_secret
+
 # 加载仓库根目录的 .env（统一来源，模板见 backend/.env.example）
 _root_env = Path(__file__).parent.parent / ".env"
 if _root_env.exists():
@@ -41,9 +43,19 @@ LOG_DIR = DATA_DIR / "logs"
 DB_PATH = DATA_DIR / "wesmartflow.db"
 
 # JWT 配置
-JWT_SECRET = os.getenv("JWT_SECRET", "wesmartflow-dev-secret-change-in-production")
-JWT_ALGORITHM = "HS256"
+# 签名算法在 utils/jwt_tokens.py 中固定为 HS256，禁止由环境变量切换。
 JWT_EXPIRE_HOURS = int(os.getenv("JWT_EXPIRE_HOURS", "72"))
+
+# 主密钥：显式配置必须是足够长的随机串；留空则在 data/ 下生成并持久化。
+# 历史上公开的默认值会在启动时被拒绝，绝不静默回退。
+JWT_SECRET_FILE = Path(
+    os.getenv("JWT_SECRET_FILE", "").strip() or DATA_DIR / "jwt_secret.key"
+)
+if not JWT_SECRET_FILE.is_absolute():
+    JWT_SECRET_FILE = ROOT_DIR / JWT_SECRET_FILE
+JWT_SECRET, JWT_SECRET_SOURCE = load_jwt_secret(
+    os.getenv("JWT_SECRET"), JWT_SECRET_FILE
+)
 
 # Admin 审核台账号（明文，单人后台用）
 # 必须在 .env 配置；未配置则 admin 登录直接 503。
@@ -102,11 +114,17 @@ GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID", "")
 GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET", "")
 
 # 服务配置
-BACKEND_HOST = os.getenv("BACKEND_HOST", "0.0.0.0")
+# 默认只监听回环地址：登录 token 的保护不能依赖“别人连不上”。
+# 需要局域网/公网访问时显式改为 0.0.0.0，并由反向代理/防火墙限制来源。
+BACKEND_HOST = os.getenv("BACKEND_HOST", "127.0.0.1")
 BACKEND_PORT = int(os.getenv("BACKEND_PORT", "8080"))
-CORS_ORIGINS = os.getenv(
-    "CORS_ORIGINS", "http://localhost:5174,http://localhost:5173"
-).split(",")
+CORS_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        "CORS_ORIGINS", "http://localhost:5174,http://localhost:5173"
+    ).split(",")
+    if origin.strip()
+]
 
 # 文件上传限制
 MAX_UPLOAD_SIZE_MB = int(os.getenv("MAX_UPLOAD_SIZE_MB", "100"))
@@ -128,3 +146,37 @@ for _dir in [
 TTS_MODEL = os.getenv(
     "TTS_MODEL", "cosyvoice-v1"
 )  # 角色语音模型（v1 默认；v2 需开通对应权限）
+
+
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+def security_warnings() -> list[str]:
+    """启动时输出的安全配置提示（不阻断启动，密钥不安全会直接抛异常）。"""
+    warnings: list[str] = []
+
+    if JWT_SECRET_SOURCE == "generated":
+        warnings.append(
+            f"未显式配置 JWT_SECRET，已使用自动生成的密钥文件 {JWT_SECRET_FILE}；"
+            "请备份该文件，生产环境建议在 .env 显式配置 JWT_SECRET"
+        )
+
+    if BACKEND_HOST not in _LOOPBACK_HOSTS:
+        warnings.append(
+            f"BACKEND_HOST={BACKEND_HOST}：服务监听非回环地址，"
+            "请确保前面有反向代理/防火墙，不要把端口直接暴露到公网"
+        )
+
+    if "*" in CORS_ORIGINS:
+        warnings.append(
+            "CORS_ORIGINS 包含 *：请改为具体的前端源，避免任意站点携带凭据访问 API"
+        )
+
+    if not ADMIN_USERNAME.strip() or not ADMIN_PASSWORD:
+        warnings.append(
+            "未配置 ADMIN_USERNAME/ADMIN_PASSWORD：管理后台接口将一律返回 503"
+        )
+    elif len(ADMIN_PASSWORD) < 12:
+        warnings.append("ADMIN_PASSWORD 长度小于 12，建议改用更长的随机口令")
+
+    return warnings
