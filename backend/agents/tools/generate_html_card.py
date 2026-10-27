@@ -76,7 +76,7 @@ _CSS = """<style>
   .stat-card .num { font-size: 22px; font-weight: 800; color: #4f46e5; line-height: 1.2; font-family: 'JetBrains Mono', 'Fira Code', monospace; }
   .stat-card .label { font-size: 11px; color: #6b7280; margin-top: 4px; line-height: 1.4; }
   .flow-row { display: flex; align-items: stretch; gap: 0; margin: 14px 0; width: 100%; }
-  .flow-node { flex: 1; display: flex; align-items: center; justify-content: center; text-align: center; padding: 10px 8px; font-size: 13px; font-weight: 600; color: #fff; line-height: 1.3; background: #4f46e5; }
+  .flow-node { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 10px 8px; font-size: 13px; font-weight: 600; color: #fff; line-height: 1.3; background: #4f46e5; }
   .flow-row .flow-node:nth-child(1) { background: #4f46e5; border-radius: 8px 0 0 8px; }
   .flow-row .flow-node:nth-child(3) { background: #7c3aed; }
   .flow-row .flow-node:nth-child(5) { background: #0ea5e9; }
