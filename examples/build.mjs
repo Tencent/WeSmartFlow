@@ -53,6 +53,8 @@ if (onlyId && !buildableTopics.some((topic) => topic.id === onlyId)) {
 // 所有主题先构建到临时目录；失败时保留上一份可用产物。
 rmSync(stagingRoot, { recursive: true, force: true });
 
+// npm.cmd 不能直接由 spawnSync 执行；复用当前 npm 的 JavaScript 入口。
+const npmCli = process.env.npm_execpath;
 const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
 for (const topic of buildableTopics) {
   if (onlyId && topic.id !== onlyId) continue;
@@ -78,7 +80,8 @@ for (const topic of buildableTopics) {
   const publicPath = `/${topic.build.outputDir.replace(/^\/+|\/+$/g, "")}/`;
   console.log(`[explore] 构建 ${topic.title} -> ${publicPath}`);
 
-  const result = spawnSync(npmCommand, ["run", topic.build.script], {
+  const npmArgs = [...(npmCli ? [npmCli] : []), "run", topic.build.script];
+  const result = spawnSync(npmCli ? process.execPath : npmCommand, npmArgs, {
     cwd: packageDir,
     stdio: "inherit",
     env: {
